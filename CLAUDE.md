@@ -11,21 +11,23 @@ deck later.
 ## Tech Stack
 - Backend: FastAPI + Uvicorn, Pydantic v2 (Python 3.10+)
 - Library: pandas, numpy, requests, matplotlib
-- Frontend: vanilla HTML/JS on DESIGN_SYSTEM.css (Claude/Cowork palette), served by the API
+- Frontend: React 18 + Vite 5 + pnpm, DESIGN_SYSTEM.css (Claude/Cowork palette)
 - Data: Massive REST API; LLMs: Gemini/Groq/OpenRouter (free), Anthropic/OpenAI/xAI (paid)
+- Chat architecture: React → JSON over /api → FastAPI → secure key → provider API
 
 ## Structure
 ```
 genai_trader/     library — config, data (massive), metrics, llm (registry+client), lessons
 backend/app/      FastAPI: main, envelope, kernel, memory
-frontend/         index.html, app.js, DESIGN_SYSTEM.css
+frontend/         Vite React app (src/App.jsx, components/, lib/api.js) + DESIGN_SYSTEM.css
 data/             runtime memory (git-ignored)
 ```
 
 ## Running
 ```bash
-./run.sh                     # http://127.0.0.1:8765
+./run.sh          # backend :8003 (or $BACKEND_PORT), frontend :5177 (or $FRONTEND_PORT)
 ```
+Honors BACKEND_PORT / FRONTEND_PORT injected by control_deck.
 
 ## Environment Variables
 Copy `.env.example` → `.env.local` (git-ignored). Keys are loaded once and only

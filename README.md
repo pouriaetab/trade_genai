@@ -12,11 +12,21 @@ endpoints, `run.sh`) so it can fold into that deck later.
 
 ```bash
 cp .env.example .env.local     # then add your keys
-./run.sh                       # → http://127.0.0.1:8765
+./run.sh                       # backend :8003, frontend :5177
 ```
 
-`run.sh` creates the venv, installs deps, and starts the API (which also serves
-the UI).
+`run.sh` sets up the venv + frontend deps, then starts the FastAPI backend and
+the Vite dev server. It honors `BACKEND_PORT` / `FRONTEND_PORT` when launched by
+control_deck.
+
+## Architecture
+
+```
+React (Vite) ──JSON /api──> FastAPI backend ──secure key──> Gemini / other providers
+```
+
+The browser never sees an API key — it calls the backend, which reads keys from
+`.env.local` and talks to the provider.
 
 ## What's inside
 
@@ -28,7 +38,7 @@ genai_trader/        reusable library
   llm/               model registry + provider-agnostic chat client
   lessons/           ch01_spy_returns.py  (more per chapter)
 backend/app/         FastAPI: main, envelope, kernel, memory
-frontend/            index.html, app.js, DESIGN_SYSTEM.css
+frontend/            React + Vite app (src/App.jsx, components/, lib/api.js) + DESIGN_SYSTEM.css
 data/                per-project memory (git-ignored)
 ```
 
@@ -71,8 +81,12 @@ Last 100 trading days of SPY, **split + dividend adjusted**, daily returns, and 
 tidy `[date, daily_return]` table. (Massive's `adjusted=true` covers splits only,
 so the client also applies the standard dividend back-adjustment.)
 
-## Folding into control_deck
+## Run from control_deck
 
-The backend is a plain FastAPI app (`backend.app.main:app`) with a small JSON API,
-so control_deck can mount it or call its endpoints. Nothing here touches
-control_deck — point me at it when you're ready to wire them together.
+trade_genai follows the control_deck project contract (a `web` project with a
+port-aware `run.sh`). Register it with:
+
+- working directory: `~/your-project-folder`
+- start command: `./run.sh`
+- ports: `BACKEND_PORT=8003`, `FRONTEND_PORT=5177`
+- web URL: `http://127.0.0.1:5177`

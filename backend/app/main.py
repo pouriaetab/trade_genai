@@ -14,6 +14,7 @@ Endpoints (all under /api/v1, all return the standard envelope):
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -25,7 +26,6 @@ if str(ROOT) not in sys.path:
 from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
-from fastapi.responses import FileResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 from genai_trader.config import get_settings  # noqa: E402
@@ -43,7 +43,7 @@ app.add_middleware(
 )
 
 kernel = KernelSession()
-FRONTEND = ROOT / "frontend"
+FRONTEND_DIST = ROOT / "frontend" / "dist"  # Vite production build
 
 
 # --- request models -------------------------------------------------------
@@ -53,6 +53,13 @@ class RunReq(BaseModel):
 
 
 class ChatReq(BaseModel):
+    provider: str
+    model: str
+    messages: list[dict]
+    max_tokens: int = 1024
+
+
+class AgentReq(BaseModel):
     provider: str
     model: str
     messages: list[dict]
@@ -121,6 +128,59 @@ def chat(req: ChatReq):
     return ok(result)
 
 
+# --- agent (chat that can run code in the kernel) -------------------------
+
+KERNEL_SYSTEM = (
+    "You are a quant research assistant inside the trade_genai app. You have a "
+    "live Python kernel with these preloaded via `genai_trader`:\n"
+    "- get_last_n_trading_days(ticker, n) -> DataFrame with columns "
+    "[date, open, high, low, close, volume, vwap, adj_close]\n"
+    "- get_adjusted_close(ticker, start, end)\n"
+    "- daily_returns(series), sharpe_ratio(returns), cumulative_returns(returns)\n"
+    "- pandas as pd, numpy as np, matplotlib.pyplot as plt\n\n"
+    "When the user asks for data, a calculation, or a chart, reply with ONE "
+    "```python code block that computes it and ends with the object to display "
+    "(a DataFrame, a number, or a matplotlib plot). Keep code short. Add at most "
+    "one short sentence of explanation outside the code block. If the request "
+    "needs no computation, just answer in plain English. The kernel keeps state "
+    "between turns, so you can build on earlier variables."
+)
+
+_CODE_RE = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.DOTALL)
+
+
+def _extract_code(text: str):
+    m = _CODE_RE.search(text or "")
+    return m.group(1).strip() if m else None
+
+
+@app.post("/api/v1/agent")
+def agent(req: AgentReq):
+    msgs = [{"role": "system", "content": KERNEL_SYSTEM}] + req.messages
+    try:
+        result = llm_chat(req.provider, req.model, msgs, max_tokens=req.max_tokens)
+    except ProviderError as exc:
+        return err(str(exc), status=400)
+    except Exception as exc:
+        return err(f"Provider request failed: {exc}", status=502)
+
+    text = result.get("text", "")
+    code = _extract_code(text)
+    execution = kernel.run(code) if code else None
+
+    words_in = sum(len(m.get("content", "").split()) for m in req.messages)
+    words_out = len(text.split())
+    return ok({
+        "provider": req.provider,
+        "model": req.model,
+        "text": text,
+        "code": code,
+        "execution": execution,
+        "usage": result.get("usage", {}),
+        "est_cost_usd": round(estimate_cost(req.provider, req.model, words_in, words_out), 5),
+    })
+
+
 # --- project memory -------------------------------------------------------
 
 @app.get("/api/v1/projects/{project_id}")
@@ -134,10 +194,9 @@ def put_project(project_id: str, req: ProjectReq):
 
 
 # --- static frontend (served last so /api takes priority) -----------------
+# In dev, Vite serves the UI on FRONTEND_PORT and proxies /api here, so this
+# mount is unused. For a standalone single-port deploy, `pnpm build` produces
+# frontend/dist and this serves it.
 
-if FRONTEND.exists():
-    @app.get("/")
-    def index():
-        return FileResponse(FRONTEND / "index.html")
-
-    app.mount("/", StaticFiles(directory=str(FRONTEND)), name="frontend")
+if FRONTEND_DIST.exists():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")

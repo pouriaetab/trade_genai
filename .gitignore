@@ -1,10 +1,20 @@
+# Python
 .venv/
 __pycache__/
 .pytest_cache/
 .mypy_cache/
-.DS_Store
+*.pyc
+
+# Node / Vite
+node_modules/
+frontend/dist/
+.pnpm-store/
+
+# Secrets & runtime
 .env
 .env.*
 !.env.example
 data/
-*.pyc
+
+# OS
+.DS_Store
