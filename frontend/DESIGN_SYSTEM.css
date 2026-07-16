@@ -1,0 +1,114 @@
+/* trade_genai design system
+   control_deck token structure, Claude / Cowork palette:
+   warm paper surfaces, clay brand accent, blue action accent, serif "voice".
+   Light + dark via [data-theme] on :root. Default: light (Cowork-style). */
+
+:root {
+  /* Typography */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-voice: Georgia, "Iowan Old Style", "Times New Roman", serif; /* Claude's voice */
+  --font-mono: "SF Mono", ui-monospace, Menlo, Monaco, "Courier New", monospace;
+  --fs-xs: 0.75rem; --fs-sm: 0.875rem; --fs-base: 1rem; --fs-lg: 1.125rem;
+  --fs-xl: 1.25rem; --fs-2xl: 1.5rem;
+  --lh-tight: 1.2; --lh-normal: 1.5; --lh-relaxed: 1.7;
+
+  /* Spacing / radius / motion */
+  --sp-1: 0.25rem; --sp-2: 0.5rem; --sp-3: 0.75rem; --sp-4: 1rem;
+  --sp-6: 1.5rem; --sp-8: 2rem;
+  --radius-sm: 6px; --radius: 8px; --radius-lg: 12px;
+  --transition: 150ms ease;
+
+  /* Claude / Cowork — LIGHT (default) */
+  --color-bg: #F4F2EC;            /* warm paper canvas */
+  --color-surface: #FAF9F5;       /* card */
+  --color-surface-2: #FFFFFF;     /* raised */
+  --color-text: #1F1E1C;
+  --color-text-secondary: #6B6A63;
+  --color-text-muted: #9A988F;
+  --color-border: #E7E4DA;
+  --color-border-strong: #D6D2C4;
+
+  --color-brand: #C96442;         /* clay — Claude's accent */
+  --color-brand-hover: #B4553A;
+  --color-on-brand: #FFFFFF;
+  --color-accent: #2C6ABF;        /* blue — user/action accent */
+  --color-accent-soft: #E7F0FB;
+
+  --color-success: #1D9E75; --color-success-soft: #E1F5EE;
+  --color-warning: #BA7517; --color-warning-soft: #FAEEDA;
+  --color-error: #C0392B;   --color-error-soft: #FAECE9;
+
+  --shadow-sm: 0 1px 2px rgba(30, 30, 28, 0.05);
+  --shadow-md: 0 4px 14px rgba(30, 30, 28, 0.08);
+}
+
+:root[data-theme="dark"] {
+  --color-bg: #1F1E1D;
+  --color-surface: #262624;
+  --color-surface-2: #302F2C;
+  --color-text: #F4F2EC;
+  --color-text-secondary: #B8B5AC;
+  --color-text-muted: #85827A;
+  --color-border: #3A3936;
+  --color-border-strong: #4A4844;
+
+  --color-brand: #D97757;
+  --color-brand-hover: #E08A6D;
+  --color-on-brand: #1F1E1D;
+  --color-accent: #6FA8E8;
+  --color-accent-soft: #23324A;
+
+  --color-success: #5DCAA5; --color-success-soft: #16362E;
+  --color-warning: #EF9F27; --color-warning-soft: #3A2A0E;
+  --color-error: #E27A6E;   --color-error-soft: #3A1F1B;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: var(--lh-normal);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 { font-weight: 500; line-height: var(--lh-tight); margin: 0; }
+
+button {
+  font-family: inherit; cursor: pointer;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
+  padding: 7px 13px; border-radius: var(--radius);
+  font-size: var(--fs-sm); transition: var(--transition);
+}
+button:hover { border-color: var(--color-text-muted); background: var(--color-surface-2); }
+button.brand { background: var(--color-brand); color: var(--color-on-brand); border-color: var(--color-brand); }
+button.brand:hover { background: var(--color-brand-hover); border-color: var(--color-brand-hover); }
+button.ghost { background: transparent; border-color: transparent; }
+button.ghost:hover { background: var(--color-surface); }
+
+select, textarea, input {
+  font-family: inherit; font-size: var(--fs-sm);
+  color: var(--color-text); background: var(--color-surface-2);
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+  padding: 7px 10px; transition: var(--transition);
+}
+select:focus, textarea:focus, input:focus {
+  outline: none; border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
+}
+
+.badge {
+  display: inline-block; font-size: var(--fs-xs); font-weight: 500;
+  padding: 2px 8px; border-radius: 999px; line-height: 1.5;
+}
+.badge.free { background: var(--color-success-soft); color: var(--color-success); }
+.badge.paid { background: var(--color-warning-soft); color: var(--color-warning); }
+.badge.muted { background: var(--color-surface); color: var(--color-text-muted); }
