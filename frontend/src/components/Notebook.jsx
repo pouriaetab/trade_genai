@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { post } from "../lib/api.js";
 
 const CH1 = `# Chapter 1 — last 100 trading days of SPY, split + dividend adjusted
@@ -10,34 +9,31 @@ print(res["raw"].tail().to_string(index=False))
 print("\\nAnnualized Sharpe:", round(res["sharpe"], 2))
 res["returns"].tail(10)   # [date, daily_return]`;
 
-let nextId = 1;
-const newCell = (code = "") => ({ id: nextId++, code, out: null, running: false });
+const uid = () =>
+  (globalThis.crypto?.randomUUID?.() || `c${Date.now()}${Math.random()}`);
+const newCell = (code = "") => ({ id: uid(), code, out: null });
 
-export default function Notebook() {
-  const [cells, setCells] = useState([newCell()]);
+// Controlled by App so cells persist across sessions.
+export default function Notebook({ cells, onChange }) {
+  const patch = (id, p) => onChange(cells.map((c) => (c.id === id ? { ...c, ...p } : c)));
 
-  function update(id, patch) {
-    setCells((cs) => cs.map((c) => (c.id === id ? { ...c, ...patch } : c)));
-  }
   function insertAfter(id, code = "") {
-    setCells((cs) => {
-      const i = cs.findIndex((c) => c.id === id);
-      const copy = [...cs];
-      copy.splice(i + 1, 0, newCell(code));
-      return copy;
-    });
+    const i = cells.findIndex((c) => c.id === id);
+    const copy = [...cells];
+    copy.splice(i + 1, 0, newCell(code));
+    onChange(copy);
   }
   function remove(id) {
-    setCells((cs) => (cs.length > 1 ? cs.filter((c) => c.id !== id) : cs));
+    if (cells.length > 1) onChange(cells.filter((c) => c.id !== id));
   }
   async function runCell(id, code) {
-    update(id, { running: true, out: { running: true } });
+    patch(id, { out: { running: true } });
     const r = await post("/api/v1/kernel/run", { code });
-    update(id, { running: false, out: r.data || {} });
+    patch(id, { out: r.data || {} });
   }
   async function reset() {
     await post("/api/v1/kernel/reset", {});
-    setCells((cs) => cs.map((c) => ({ ...c, out: null })));
+    onChange(cells.map((c) => ({ ...c, out: null })));
   }
 
   return (
@@ -45,7 +41,7 @@ export default function Notebook() {
       <div className="panel-head">
         <h2>Notebook — run book code, see results</h2>
         <div className="spacer" />
-        <button className="ghost" onClick={() => setCells((cs) => [...cs, newCell(CH1)])}>
+        <button className="ghost" onClick={() => onChange([...cells, newCell(CH1)])}>
           Load Ch 1 · SPY returns
         </button>
         <button className="ghost" onClick={reset}>Reset</button>
@@ -53,7 +49,8 @@ export default function Notebook() {
       <div className="panel-body">
         <p className="lead">Paste a code chunk and press <kbd>Shift</kbd>+<kbd>Enter</kbd>.
           State persists between cells; <code>pd</code>, <code>np</code>, <code>plt</code> and the
-          <code> genai_trader</code> helpers are preloaded. Add a cell anywhere with <b>+</b>.</p>
+          <code> genai_trader</code> helpers are preloaded. Add a cell anywhere with <b>+</b>.
+          Your cells are saved automatically.</p>
         {cells.map((c) => (
           <div key={c.id}>
             <div className="cell">
@@ -66,7 +63,7 @@ export default function Notebook() {
                 spellCheck={false}
                 value={c.code}
                 placeholder="# paste code here"
-                onChange={(e) => update(c.id, { code: e.target.value })}
+                onChange={(e) => patch(c.id, { code: e.target.value })}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && (e.shiftKey || e.metaKey || e.ctrlKey)) {
                     e.preventDefault(); runCell(c.id, c.code);
@@ -93,9 +90,7 @@ function CellOutput({ out }) {
       {out.stdout && out.stdout.trim() && <pre>{out.stdout}</pre>}
       {out.result_html && <div dangerouslySetInnerHTML={{ __html: out.result_html }} />}
       {out.result_text && <pre>{out.result_text}</pre>}
-      {(out.figures || []).map((f, i) => (
-        <img key={i} src={`data:image/png;base64,${f}`} alt="figure" />
-      ))}
+      {(out.figures || []).map((f, i) => <img key={i} src={`data:image/png;base64,${f}`} alt="figure" />)}
       {out.error && <div className="err"><pre>{out.error}</pre></div>}
       {nothing && <pre style={{ color: "var(--color-text-muted)" }}>(no output)</pre>}
     </div>
