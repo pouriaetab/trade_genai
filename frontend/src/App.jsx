@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, put } from "./lib/api.js";
 import StatusBar from "./components/StatusBar.jsx";
-import Notebook from "./components/Notebook.jsx";
-import ModelChat from "./components/ModelChat.jsx";
+import Workbench from "./components/Workbench.jsx";
 import Memory from "./components/Memory.jsx";
 
 const PROJECT_ID = "chapters-1-2";
@@ -13,24 +12,15 @@ const TABS = [
   { id: "about", label: "About" },
 ];
 
-const uid = () =>
-  (globalThis.crypto?.randomUUID?.() || `c${Date.now()}${Math.random()}`);
-
 function readTheme() {
   try { return localStorage.getItem("tg.theme") || "light"; } catch { return "light"; }
 }
 
-// Keep only lightweight fields in storage (drop base64 figures / big HTML).
-function stripChat(chat) {
-  return chat.map((m) => ({
-    role: m.role, content: m.content, meta: m.meta,
-    execSummary: m.execSummary, isCode: m.isCode,
-  }));
-}
-function stripCells(cells) {
-  return cells.map((c) => ({
-    id: c.id, code: c.code,
-    out: c.out ? { stdout: c.out.stdout, result_text: c.out.result_text, error: c.out.error } : null,
+// Keep storage light: drop base64 figures / big HTML from the saved thread.
+function stripThread(thread) {
+  return thread.map((t) => ({
+    id: t.id, role: t.role, text: t.text, code: t.code,
+    meta: t.meta, execSummary: t.execSummary,
   }));
 }
 
@@ -39,8 +29,7 @@ export default function App() {
   const [tab, setTab] = useState("learn");
   const [models, setModels] = useState([]);
   const [notes, setNotes] = useState("");
-  const [conversation, setConversation] = useState([]);
-  const [cells, setCells] = useState([{ id: uid(), code: "", out: null }]);
+  const [thread, setThread] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
 
@@ -49,14 +38,12 @@ export default function App() {
     try { localStorage.setItem("tg.theme", theme); } catch {}
   }, [theme]);
 
-  // Load registry + restore the saved project workspace once.
   useEffect(() => {
     api("/api/v1/models").then((r) => setModels(r.data || []));
     api(`/api/v1/projects/${PROJECT_ID}`).then((r) => {
       const p = r.data || {};
       setNotes(p.notes || "");
-      setConversation(p.chat || []);
-      if (Array.isArray(p.cells) && p.cells.length) setCells(p.cells);
+      setThread(Array.isArray(p.chat) ? p.chat : []);
       setLoaded(true);
     });
   }, []);
@@ -65,12 +52,11 @@ export default function App() {
   useEffect(() => {
     if (!loaded) return;
     const t = setTimeout(() => {
-      put(`/api/v1/projects/${PROJECT_ID}`, {
-        notes, chat: stripChat(conversation), cells: stripCells(cells),
-      }).then(() => setSavedAt(Date.now()));
+      put(`/api/v1/projects/${PROJECT_ID}`, { notes, chat: stripThread(thread), cells: [] })
+        .then(() => setSavedAt(Date.now()));
     }, 700);
     return () => clearTimeout(t);
-  }, [notes, conversation, cells, loaded]);
+  }, [notes, thread, loaded]);
 
   return (
     <>
@@ -98,9 +84,8 @@ export default function App() {
       <main>
         {tab === "learn" && (
           <div className="learn">
-            <Notebook cells={cells} onChange={setCells} />
+            <Workbench models={models} thread={thread} onThread={setThread} />
             <div className="col">
-              <ModelChat models={models} conversation={conversation} onConversation={setConversation} />
               <Memory notes={notes} onNotes={setNotes} savedAt={savedAt} />
             </div>
           </div>

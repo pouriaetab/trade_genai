@@ -51,10 +51,10 @@ PROVIDERS: dict[str, Provider] = {
         has_free_tier=True,
         docs_url="https://ai.google.dev/gemini-api/docs",
         models=[
+            Model("gemini-flash-latest", "Gemini Flash (latest)", "free", 0.15, 0.60,
+                  1_000_000, "Version-stable alias — recommended default, avoids 404s."),
             Model("gemini-2.5-flash", "Gemini 2.5 Flash", "free", 0.15, 0.60,
                   1_000_000, "Free tier ~1,500 req/day. Fast, multimodal."),
-            Model("gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite", "free", 0.10, 0.40,
-                  1_000_000, "Cheapest/fastest; great default for the free tier."),
             Model("gemini-2.5-pro", "Gemini 2.5 Pro", "free", 2.50, 15.00,
                   1_000_000, "Free tier ~50 req/day; strongest Gemini reasoning."),
         ],
