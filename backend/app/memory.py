@@ -56,3 +56,19 @@ def append_chat(project_id: str, entry: dict) -> dict:
         proj["chat"].append(entry)
         _save(state)
         return proj
+
+
+# --- workspace: named tabs (sessions), each with its own cells + notes -----
+
+def get_workspace() -> dict:
+    with _lock:
+        state = _load()
+        return state.get("workspace") or {"sessions": [], "activeId": None}
+
+
+def save_workspace(workspace: dict) -> dict:
+    with _lock:
+        state = _load()
+        state["workspace"] = workspace
+        _save(state)
+        return workspace

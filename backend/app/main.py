@@ -72,6 +72,11 @@ class ProjectReq(BaseModel):
     chat: list = []
 
 
+class WorkspaceReq(BaseModel):
+    sessions: list = []
+    activeId: str | None = None
+
+
 # --- status & registry ----------------------------------------------------
 
 @app.get("/api/v1/status")
@@ -201,6 +206,18 @@ def get_project(project_id: str):
 @app.put("/api/v1/projects/{project_id}")
 def put_project(project_id: str, req: ProjectReq):
     return ok(memory.save_project(project_id, req.model_dump()), message="Saved")
+
+
+# --- workspace (named tabs / sessions) ------------------------------------
+
+@app.get("/api/v1/workspace")
+def get_workspace():
+    return ok(memory.get_workspace())
+
+
+@app.put("/api/v1/workspace")
+def put_workspace(req: WorkspaceReq):
+    return ok(memory.save_workspace(req.model_dump()), message="Saved")
 
 
 # --- static frontend (served last so /api takes priority) -----------------

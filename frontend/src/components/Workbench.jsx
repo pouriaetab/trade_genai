@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { post } from "../lib/api.js";
 
-const uid = () => (globalThis.crypto?.randomUUID?.() || `t${Date.now()}${Math.random()}`);
+const uid = () => (globalThis.crypto?.randomUUID?.() || `c${Date.now()}${Math.random()}`);
 
 function summarizeExec(exec) {
   if (!exec) return "";
@@ -15,8 +15,8 @@ function summarizeExec(exec) {
 }
 
 function ExecOutput({ exec }) {
-  if (!exec || exec.running) return exec?.running
-    ? <div className="out"><pre style={{ color: "var(--color-accent)" }}>running…</pre></div> : null;
+  if (!exec) return null;
+  if (exec.running) return <div className="out"><pre style={{ color: "var(--color-accent)" }}>running…</pre></div>;
   const nothing = !exec.stdout && !exec.result_html && !exec.result_text && !(exec.figures || []).length && !exec.error;
   return (
     <div className="out">
@@ -30,13 +30,12 @@ function ExecOutput({ exec }) {
   );
 }
 
-export default function Workbench({ models, thread, onThread }) {
+export default function Workbench({ models, cells, onCells }) {
   const [providerId, setProviderId] = useState("");
   const [modelId, setModelId] = useState("");
-  const [mode, setMode] = useState("prompt"); // "prompt" | "code"
+  const [mode, setMode] = useState("prompt");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-  const logRef = useRef(null);
 
   useEffect(() => {
     if (!models.length) return;
@@ -52,25 +51,24 @@ export default function Workbench({ models, thread, onThread }) {
   const provider = useMemo(() => models.find((p) => p.id === providerId) || null, [models, providerId]);
   const model = useMemo(() => (provider ? provider.models.find((m) => m.id === modelId) : null), [provider, modelId]);
 
-  useEffect(() => {
-    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [thread, busy]);
+  const patch = (id, p) => onCells(cells.map((c) => (c.id === id ? { ...c, ...p } : c)));
+  const removeCell = (id) => onCells(cells.filter((c) => c.id !== id));
 
-  function patch(id, p) { onThread(thread.map((t) => (t.id === id ? { ...t, ...p } : t))); }
-
-  function buildMessages(items) {
-    return items.map((t) => {
-      if (t.role === "user") return { role: "user", content: t.text || "" };
-      if (t.role === "assistant") {
-        let c = t.text && t.text !== "…" ? t.text : "";
-        if (t.code) c += `\n\n\`\`\`python\n${t.code}\n\`\`\``;
-        if (t.execSummary) c += `\n\n[result]\n${t.execSummary}`;
-        return { role: "assistant", content: c || "(ran code)" };
+  function buildMessages(list) {
+    const msgs = [];
+    for (const c of list) {
+      if (c.kind === "code") {
+        msgs.push({ role: "user", content: `I ran:\n\`\`\`python\n${c.code}\n\`\`\``
+          + (c.execSummary ? `\n[result]\n${c.execSummary}` : "") });
+      } else {
+        msgs.push({ role: "user", content: c.input || "" });
+        let a = c.answer && c.answer !== "…" ? c.answer : "";
+        if (c.code) a += `\n\n\`\`\`python\n${c.code}\n\`\`\``;
+        if (c.execSummary) a += `\n\n[result]\n${c.execSummary}`;
+        if (a) msgs.push({ role: "assistant", content: a });
       }
-      // code turn -> feed as user context so the model remembers it
-      return { role: "user", content: `I ran:\n\`\`\`python\n${t.code}\n\`\`\``
-        + (t.execSummary ? `\n[result]\n${t.execSummary}` : "") };
-    });
+    }
+    return msgs;
   }
 
   async function runCode(id, code) {
@@ -86,31 +84,29 @@ export default function Workbench({ models, thread, onThread }) {
     setText("");
 
     if (mode === "code") {
-      const entry = { id: uid(), role: "code", code: input, execution: { running: true } };
-      onThread([...thread, entry]);
+      const cell = { id: uid(), kind: "code", code: input, execution: { running: true } };
+      onCells([...cells, cell]);
       const r = await post("/api/v1/kernel/run", { code: input });
       const exec = r.data || {};
-      onThread([...thread, { ...entry, execution: exec, execSummary: summarizeExec(exec) }]);
+      onCells([...cells, { ...cell, execution: exec, execSummary: summarizeExec(exec) }]);
       return;
     }
 
     if (!provider || !model) return;
-    const userEntry = { id: uid(), role: "user", text: input };
-    const pendingId = uid();
-    const base = [...thread, userEntry];
-    onThread([...base, { id: pendingId, role: "assistant", text: "…" }]);
+    const id = uid();
+    const base = [...cells];
+    onCells([...base, { id, kind: "prompt", input, answer: "…" }]);
     setBusy(true);
-    const r = await post("/api/v1/agent", {
-      provider: provider.id, model: model.id, messages: buildMessages(base), max_tokens: 1024,
-    });
+    const messages = [...buildMessages(base), { role: "user", content: input }];
+    const r = await post("/api/v1/agent", { provider: provider.id, model: model.id, messages, max_tokens: 1024 });
     setBusy(false);
     if (!r.success) {
-      onThread([...base, { id: pendingId, role: "assistant", text: r.message, meta: "error" }]);
+      onCells([...base, { id, kind: "prompt", input, answer: r.message, meta: "error" }]);
       return;
     }
     const d = r.data;
-    onThread([...base, {
-      id: pendingId, role: "assistant", text: d.text, code: d.code || null,
+    onCells([...base, {
+      id, kind: "prompt", input, answer: d.text, code: d.code || null,
       execution: d.execution || null, execSummary: summarizeExec(d.execution),
       meta: `${d.model} · ~$${(d.est_cost_usd || 0).toFixed(4)}`,
     }]);
@@ -144,6 +140,20 @@ export default function Workbench({ models, thread, onThread }) {
       </div>
 
       <div className="panel-body">
+        {/* New cell — always on top; new results push older ones down */}
+        <div className="new-cell">
+          <textarea value={text}
+            style={mode === "code" ? { fontFamily: "var(--font-mono)", fontSize: "12.5px" } : undefined}
+            placeholder={mode === "prompt"
+              ? "Ask for data or analysis — e.g. “last 100 daily closes of SPY, adjusted, as date + price”. Enter to send."
+              : "# Python — runs in the shared kernel. Shift+Enter to run."}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              const submit = mode === "code" ? (e.shiftKey || e.metaKey || e.ctrlKey) : !e.shiftKey;
+              if (e.key === "Enter" && submit) { e.preventDefault(); send(); }
+            }} />
+          <button className="brand" onClick={send} disabled={busy}>{mode === "code" ? "Run" : "Send"}</button>
+        </div>
         {model && (
           <p className="model-meta">
             <span className={"badge " + model.tier}>{model.tier}</span> {model.cost_hint}
@@ -152,56 +162,42 @@ export default function Workbench({ models, thread, onThread }) {
           </p>
         )}
 
-        <div className="thread" ref={logRef}>
-          {thread.length === 0 && (
-            <p className="placeholder">Ask in plain English — e.g. <i>“get the last 100 daily closes of
-            SPY, split &amp; dividend adjusted, as date + price”</i> — then follow up with <i>“now plot
-            it.”</i> The model writes the code, it runs here, and results appear below. Switch to
-            <b> Code</b> to write Python yourself.</p>
+        <div className="thread">
+          {cells.length === 0 && (
+            <p className="placeholder">Your cells appear here, newest on top. Ask something, keep the
+            result, then ask again — each new cell stacks above the last. Everything in this tab is saved
+            automatically.</p>
           )}
-          {thread.map((t) => (
-            <div key={t.id} className="turn">
-              {t.role === "user" && <div className="msg user"><span>{t.text}</span></div>}
-              {(t.role === "assistant" || t.role === "code") && (
-                <div className="msg assistant">
-                  {t.text === "…" ? <span>…</span> : t.text && <div className="answer">{t.text}</div>}
-                  {t.code != null && (
-                    <div className="code-block">
-                      <div className="code-head">
-                        <span>python</span><div className="spacer" />
-                        <button className="ghost" onClick={() => runCode(t.id, t.code)}>▶ Re-run</button>
-                      </div>
-                      <textarea spellCheck={false} value={t.code}
-                        onChange={(e) => patch(t.id, { code: e.target.value })}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && (e.shiftKey || e.metaKey || e.ctrlKey)) {
-                            e.preventDefault(); runCode(t.id, t.code);
-                          }
-                        }} />
-                    </div>
-                  )}
-                  {t.execution ? <ExecOutput exec={t.execution} />
-                    : t.execSummary ? <pre className="exec-summary">{t.execSummary}</pre> : null}
-                  {t.meta && <span className="meta">{t.meta}</span>}
+          {[...cells].reverse().map((c) => (
+            <div key={c.id} className="cell-unit">
+              <div className="cell-bar">
+                <span className="cell-tag">{c.kind === "code" ? "code" : "prompt"}</span>
+                <div className="spacer" />
+                <button className="ghost" title="Delete cell" onClick={() => removeCell(c.id)}>×</button>
+              </div>
+              {c.kind === "prompt" && c.input && <div className="msg user"><span>{c.input}</span></div>}
+              {c.answer === "…" ? <span className="dots">…</span>
+                : c.answer && <div className="answer">{c.answer}</div>}
+              {c.code != null && (
+                <div className="code-block">
+                  <div className="code-head">
+                    <span>python</span><div className="spacer" />
+                    <button className="ghost" onClick={() => runCode(c.id, c.code)}>▶ Re-run</button>
+                  </div>
+                  <textarea spellCheck={false} value={c.code}
+                    onChange={(e) => patch(c.id, { code: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && (e.shiftKey || e.metaKey || e.ctrlKey)) {
+                        e.preventDefault(); runCode(c.id, c.code);
+                      }
+                    }} />
                 </div>
               )}
+              {c.execution ? <ExecOutput exec={c.execution} />
+                : c.execSummary ? <pre className="exec-summary">{c.execSummary}</pre> : null}
+              {c.meta && <span className="meta">{c.meta}</span>}
             </div>
           ))}
-          {busy && <div className="msg assistant"><span>…</span></div>}
-        </div>
-
-        <div className="chat-input">
-          <textarea value={text}
-            style={mode === "code" ? { fontFamily: "var(--font-mono)", fontSize: "12.5px" } : undefined}
-            placeholder={mode === "prompt"
-              ? "Ask for data or analysis…  (Enter to send, Shift+Enter for newline)"
-              : "# Python — runs in the shared kernel  (Shift+Enter to run)"}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              const submit = mode === "code" ? (e.shiftKey || e.metaKey || e.ctrlKey) : !e.shiftKey;
-              if (e.key === "Enter" && submit) { e.preventDefault(); send(); }
-            }} />
-          <button className="brand" onClick={send} disabled={busy}>{mode === "code" ? "Run" : "Send"}</button>
         </div>
       </div>
     </div>

@@ -1,35 +1,33 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, put } from "./lib/api.js";
 import StatusBar from "./components/StatusBar.jsx";
+import SessionTabs from "./components/SessionTabs.jsx";
 import Workbench from "./components/Workbench.jsx";
 import Memory from "./components/Memory.jsx";
 
-const PROJECT_ID = "chapters-1-2";
-const TABS = [
-  { id: "learn", label: "Learn · Ch 1–2" },
-  { id: "strategies", label: "Strategies", soon: true },
-  { id: "assets", label: "Asset management", soon: true },
-  { id: "about", label: "About" },
-];
+const uid = () => (globalThis.crypto?.randomUUID?.() || `s${Date.now()}${Math.random()}`);
+const newSession = (name) => ({ id: uid(), name, cells: [], notes: "" });
 
 function readTheme() {
   try { return localStorage.getItem("tg.theme") || "light"; } catch { return "light"; }
 }
 
-// Keep storage light: drop base64 figures / big HTML from the saved thread.
-function stripThread(thread) {
-  return thread.map((t) => ({
-    id: t.id, role: t.role, text: t.text, code: t.code,
-    meta: t.meta, execSummary: t.execSummary,
+// Keep storage light: drop base64 figures / big HTML from saved cells.
+function stripSessions(sessions) {
+  return sessions.map((s) => ({
+    id: s.id, name: s.name, notes: s.notes,
+    cells: (s.cells || []).map((c) => ({
+      id: c.id, kind: c.kind, input: c.input, answer: c.answer,
+      code: c.code, meta: c.meta, execSummary: c.execSummary,
+    })),
   }));
 }
 
 export default function App() {
   const [theme, setTheme] = useState(readTheme());
-  const [tab, setTab] = useState("learn");
   const [models, setModels] = useState([]);
-  const [notes, setNotes] = useState("");
-  const [thread, setThread] = useState([]);
+  const [sessions, setSessions] = useState([]);
+  const [activeId, setActiveId] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
 
@@ -38,25 +36,53 @@ export default function App() {
     try { localStorage.setItem("tg.theme", theme); } catch {}
   }, [theme]);
 
+  // Restore the workspace (all tabs) once.
   useEffect(() => {
     api("/api/v1/models").then((r) => setModels(r.data || []));
-    api(`/api/v1/projects/${PROJECT_ID}`).then((r) => {
-      const p = r.data || {};
-      setNotes(p.notes || "");
-      setThread(Array.isArray(p.chat) ? p.chat : []);
+    api("/api/v1/workspace").then((r) => {
+      const w = r.data || {};
+      let ss = Array.isArray(w.sessions) ? w.sessions : [];
+      if (!ss.length) ss = [newSession("Chapter 1")];
+      setSessions(ss);
+      setActiveId(ss.find((s) => s.id === w.activeId) ? w.activeId : ss[0].id);
       setLoaded(true);
     });
   }, []);
 
-  // Debounced autosave of the whole workspace after any change (post-load only).
+  // Debounced autosave of the whole workspace after any change.
   useEffect(() => {
     if (!loaded) return;
     const t = setTimeout(() => {
-      put(`/api/v1/projects/${PROJECT_ID}`, { notes, chat: stripThread(thread), cells: [] })
+      put("/api/v1/workspace", { sessions: stripSessions(sessions), activeId })
         .then(() => setSavedAt(Date.now()));
     }, 700);
     return () => clearTimeout(t);
-  }, [notes, thread, loaded]);
+  }, [sessions, activeId, loaded]);
+
+  const active = useMemo(
+    () => sessions.find((s) => s.id === activeId) || sessions[0] || null,
+    [sessions, activeId]
+  );
+
+  const patchActive = (p) =>
+    setSessions((ss) => ss.map((s) => (s.id === active.id ? { ...s, ...p } : s)));
+
+  function addSession() {
+    const s = newSession(`Chapter ${sessions.length + 1}`);
+    setSessions((cur) => [...cur, s]);
+    setActiveId(s.id);
+  }
+  function renameSession(id, name) {
+    setSessions((ss) => ss.map((s) => (s.id === id ? { ...s, name } : s)));
+  }
+  function deleteSession(id) {
+    setSessions((ss) => {
+      const rest = ss.filter((s) => s.id !== id);
+      const next = rest.length ? rest : [newSession("Chapter 1")];
+      if (id === activeId) setActiveId(next[0].id);
+      return next;
+    });
+  }
 
   return (
     <>
@@ -72,45 +98,29 @@ export default function App() {
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>◐</button>
       </header>
 
-      <nav className="tabs">
-        {TABS.map((t) => (
-          <button key={t.id} className={"tab" + (tab === t.id ? " active" : "")}
-            onClick={() => setTab(t.id)}>
-            {t.label}{t.soon && <span className="soon">soon</span>}
-          </button>
-        ))}
-      </nav>
-
-      <main>
-        {tab === "learn" && (
-          <div className="learn">
-            <Workbench models={models} thread={thread} onThread={setThread} />
-            <div className="col">
-              <Memory notes={notes} onNotes={setNotes} savedAt={savedAt} />
+      {active && (
+        <>
+          <SessionTabs
+            sessions={sessions} activeId={active.id}
+            onSwitch={setActiveId} onAdd={addSession}
+            onRename={renameSession} onDelete={deleteSession}
+          />
+          <main>
+            <div className="learn">
+              <Workbench
+                key={active.id}
+                models={models}
+                cells={active.cells || []}
+                onCells={(cells) => patchActive({ cells })}
+              />
+              <div className="col">
+                <Memory notes={active.notes || ""} onNotes={(notes) => patchActive({ notes })}
+                  savedAt={savedAt} />
+              </div>
             </div>
-          </div>
-        )}
-
-        {tab === "strategies" && (
-          <div className="panel"><div className="panel-body">
-            <p className="placeholder">Your own trading strategies live here — each as a project with a
-            backtest, metrics (Sharpe, drawdown), and the model chat that helped build it. Built on the
-            <code> genai_trader</code> library, not tied to the book.</p>
-          </div></div>
-        )}
-        {tab === "assets" && (
-          <div className="panel"><div className="panel-body">
-            <p className="placeholder">Asset-management views — portfolio construction, risk, and allocation.</p>
-          </div></div>
-        )}
-        {tab === "about" && (
-          <div className="panel"><div className="panel-body">
-            <p className="placeholder">trade_genai is a research and trading lab. It started from the book
-            <i> Generative AI for Trading and Asset Management</i> but is evolving into original strategy
-            work. React + Vite frontend, FastAPI backend, multi-provider model chat.</p>
-          </div></div>
-        )}
-      </main>
+          </main>
+        </>
+      )}
     </>
   );
 }
