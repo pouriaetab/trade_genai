@@ -11,9 +11,34 @@ Endpoints (all under /api/v1, all return the standard envelope):
     POST /api/v1/chat                send a chat message to a chosen model
     GET  /api/v1/projects/{id}       load a project's memory
     PUT  /api/v1/projects/{id}       save a project's memory
+    GET  /api/v1/workspace           load all workspace tabs (Lab/Notebook)
+    PUT  /api/v1/workspace           save all workspace tabs
+    GET  /api/v1/strategies          R&D strategy registry
+    POST /api/v1/rd/ef/fetch         Efficient Frontier: fetch prices
+    POST /api/v1/rd/ef/returns       Efficient Frontier: prices -> returns
+    POST /api/v1/rd/ef/stats         Efficient Frontier: returns -> annual stats
+    POST /api/v1/rd/ef/frontier      Efficient Frontier: stats -> frontier curve
+    POST /api/v1/rd/ef/run           Efficient Frontier: whole pipeline at once
+
+    Settings — add/remove providers from the app, no code or .env edits needed:
+    GET    /api/v1/settings/data-providers            list market-data providers
+    POST   /api/v1/settings/data-providers             add one
+    DELETE /api/v1/settings/data-providers/{id}        remove (or disable the built-in)
+    PUT    /api/v1/settings/data-providers/{id}/enabled toggle on/off
+    PUT    /api/v1/settings/data-providers/{id}/active  make it the active one
+    GET    /api/v1/settings/llm-providers               list LLM providers + models
+    POST   /api/v1/settings/llm-providers                add a custom provider
+    DELETE /api/v1/settings/llm-providers/{id}          remove (default or custom)
+    POST   /api/v1/settings/llm-providers/{id}/restore   un-remove a default provider
+    PUT    /api/v1/settings/llm-providers/{id}/key       set/replace its API key from the app
+    POST   /api/v1/settings/llm-providers/{id}/models    add a custom model
+    DELETE /api/v1/settings/llm-providers/{id}/models/{model_id}   remove a model
+    POST   /api/v1/settings/llm-providers/{id}/models/{model_id}/restore
+    POST   /api/v1/settings/llm-providers/{id}/refresh   pull the provider's current model list
 """
 from __future__ import annotations
 
+import datetime as dt
 import re
 import sys
 from pathlib import Path
@@ -27,12 +52,14 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
+import pandas as pd  # noqa: E402
 
-from genai_trader.config import get_settings  # noqa: E402
+from genai_trader import config as cfg  # noqa: E402
 from genai_trader.llm import (  # noqa: E402
     list_providers, models_for, provider_ready, chat as llm_chat,
-    estimate_cost, ProviderError,
+    estimate_cost, ProviderError, list_available_models, overlay as llm_overlay,
 )
+from genai_trader import strategies as strat  # noqa: E402
 from .envelope import ok, err  # noqa: E402
 from .kernel import KernelSession  # noqa: E402
 from . import memory  # noqa: E402
@@ -56,14 +83,14 @@ class ChatReq(BaseModel):
     provider: str
     model: str
     messages: list[dict]
-    max_tokens: int = 1024
+    max_tokens: int = 4096
 
 
 class AgentReq(BaseModel):
     provider: str
     model: str
     messages: list[dict]
-    max_tokens: int = 1024
+    max_tokens: int = 4096
 
 
 class ProjectReq(BaseModel):
@@ -77,19 +104,81 @@ class WorkspaceReq(BaseModel):
     activeId: str | None = None
 
 
+class EFFetchReq(BaseModel):
+    symbols: list[str]
+    start: str  # YYYY-MM-DD
+    end: str
+
+
+class EFReturnsReq(BaseModel):
+    wide: dict
+    kind: str = "simple"  # "simple" | "log"
+
+
+class EFStatsReq(BaseModel):
+    returns: dict
+    periods_per_year: int = 252
+
+
+class EFFrontierReq(BaseModel):
+    annual_returns: dict
+    cov_matrix: dict
+    risk_free_rate: float = 0.0
+    n_points: int = 40
+
+
+class EFRunReq(BaseModel):
+    symbols: list[str]
+    start: str
+    end: str
+    kind: str = "simple"
+    risk_free_rate: float = 0.0
+    n_points: int = 40
+
+
+class DataProviderReq(BaseModel):
+    name: str
+    rest_url: str
+    api_key: str
+    kind: str = "polygon_compatible"
+
+
+class EnabledReq(BaseModel):
+    enabled: bool
+
+
+class LLMProviderReq(BaseModel):
+    label: str
+    base_url: str
+    api_key: str = ""
+    compat: str = "openai"
+    has_free_tier: bool = False
+    docs_url: str = ""
+
+
+class LLMKeyReq(BaseModel):
+    api_key: str
+
+
+class LLMModelReq(BaseModel):
+    id: str
+    label: str = ""
+    tier: str = "paid"
+    input_price: float = 0.0
+    output_price: float = 0.0
+    context: int = 128_000
+    note: str = ""
+
+
 # --- status & registry ----------------------------------------------------
 
 @app.get("/api/v1/status")
 def status():
-    try:
-        s = get_settings()
-        massive = {"configured": True, "key": s.masked_key, "rest_url": s.rest_url}
-    except Exception as exc:
-        massive = {"configured": False, "error": str(exc)}
+    data_providers = cfg.list_data_providers()
     providers = [
         {**p, "ready": provider_ready(p["id"])} for p in list_providers()
     ]
-    return ok({"massive": massive, "providers": providers})
+    return ok({"data_providers": data_providers, "providers": providers})
 
 
 @app.get("/api/v1/models")
@@ -218,6 +307,267 @@ def get_workspace():
 @app.put("/api/v1/workspace")
 def put_workspace(req: WorkspaceReq):
     return ok(memory.save_workspace(req.model_dump()), message="Saved")
+
+
+# --- R&D: strategy registry + Efficient Frontier pipeline ------------------
+# A "table" over the wire is {index, index_name, columns, data} — a date-indexed
+# DataFrame in JSON form (NaN -> null). Each pipeline step below is exposed as
+# its own endpoint so the UI can run/inspect one step at a time, plus a single
+# /run endpoint that does the whole pipeline in one call.
+
+def _table(df: "pd.DataFrame", index_name: str = "date") -> dict:
+    idx = df.index
+    index = idx.strftime("%Y-%m-%d").tolist() if hasattr(idx, "strftime") else [str(x) for x in idx]
+    data = [[None if pd.isna(v) else float(v) for v in row] for row in df.to_numpy()]
+    return {"index": index, "index_name": index_name, "columns": [str(c) for c in df.columns], "data": data}
+
+
+def _wide_from_table(t: dict) -> "pd.DataFrame":
+    return pd.DataFrame(t["data"], columns=t["columns"], index=pd.to_datetime(t["index"]))
+
+
+def _parse_symbols(symbols: list[str]) -> list[str]:
+    return [s.strip().upper() for s in symbols if s and s.strip()]
+
+
+@app.get("/api/v1/strategies")
+def strategies():
+    return ok([
+        {
+            "id": "efficient_frontier",
+            "name": "Efficient Frontier",
+            "summary": "Fetch a symbol basket, transform prices into returns, "
+                       "then solve the mean-variance efficient frontier.",
+        },
+    ])
+
+
+@app.post("/api/v1/rd/ef/fetch")
+def ef_fetch(req: EFFetchReq):
+    symbols = _parse_symbols(req.symbols)
+    if not symbols:
+        return err("Provide at least one symbol.", status=400)
+    try:
+        start = dt.date.fromisoformat(req.start)
+        end = dt.date.fromisoformat(req.end)
+    except ValueError:
+        return err("Dates must be YYYY-MM-DD.", status=400)
+    try:
+        long_df = strat.fetch_prices(symbols, start, end)
+    except Exception as exc:
+        return err(f"Fetch failed: {exc}", status=502)
+    if long_df.empty:
+        return err("No data returned for these symbols / date range.", status=400)
+    wide = strat.to_wide_adj_close(long_df)
+    preview = long_df.copy()
+    preview["date"] = preview["date"].dt.strftime("%Y-%m-%d")
+    return ok({
+        "raw_preview": preview.head(20).to_dict(orient="records"),
+        "raw_row_count": int(len(long_df)),
+        "wide": _table(wide),
+    })
+
+
+@app.post("/api/v1/rd/ef/returns")
+def ef_returns(req: EFReturnsReq):
+    try:
+        wide = _wide_from_table(req.wide)
+        returns = strat.compute_returns(wide, kind=req.kind)
+        if returns.empty:
+            return err("Not enough overlapping data to compute returns.", status=400)
+        return ok({"returns": _table(returns)})
+    except Exception as exc:
+        return err(f"Transform failed: {exc}", status=400)
+
+
+@app.post("/api/v1/rd/ef/stats")
+def ef_stats(req: EFStatsReq):
+    try:
+        returns = _wide_from_table(req.returns)
+        annual_returns, cov = strat.annualize(returns, periods_per_year=req.periods_per_year)
+        return ok({
+            "annual_returns": {k: float(v) for k, v in annual_returns.items()},
+            "cov_matrix": _table(cov, index_name="symbol"),
+        })
+    except Exception as exc:
+        return err(f"Stats failed: {exc}", status=400)
+
+
+@app.post("/api/v1/rd/ef/frontier")
+def ef_frontier(req: EFFrontierReq):
+    try:
+        mu = pd.Series(req.annual_returns)
+        cov = _wide_from_table(req.cov_matrix)
+        result = strat.efficient_frontier(
+            mu, cov, risk_free_rate=req.risk_free_rate, n_points=req.n_points
+        )
+        return ok(result)
+    except ValueError as exc:
+        return err(str(exc), status=400)
+    except Exception as exc:
+        return err(f"Efficient frontier failed: {exc}", status=400)
+
+
+@app.post("/api/v1/rd/ef/run")
+def ef_run(req: EFRunReq):
+    """Whole pipeline in one call: fetch -> returns -> stats -> frontier."""
+    symbols = _parse_symbols(req.symbols)
+    if len(symbols) < 2:
+        return err("Provide at least 2 symbols to build a frontier.", status=400)
+    try:
+        start = dt.date.fromisoformat(req.start)
+        end = dt.date.fromisoformat(req.end)
+    except ValueError:
+        return err("Dates must be YYYY-MM-DD.", status=400)
+    try:
+        long_df = strat.fetch_prices(symbols, start, end)
+        if long_df.empty:
+            return err("No data returned for these symbols / date range.", status=400)
+        wide = strat.to_wide_adj_close(long_df)
+        returns = strat.compute_returns(wide, kind=req.kind)
+        if returns.empty:
+            return err("Not enough overlapping data to compute returns.", status=400)
+        annual_returns, cov = strat.annualize(returns)
+        frontier = strat.efficient_frontier(
+            annual_returns, cov, risk_free_rate=req.risk_free_rate, n_points=req.n_points
+        )
+        preview = long_df.copy()
+        preview["date"] = preview["date"].dt.strftime("%Y-%m-%d")
+        return ok({
+            "raw_preview": preview.head(20).to_dict(orient="records"),
+            "raw_row_count": int(len(long_df)),
+            "wide": _table(wide),
+            "returns": _table(returns),
+            "annual_returns": {k: float(v) for k, v in annual_returns.items()},
+            "cov_matrix": _table(cov, index_name="symbol"),
+            **frontier,
+        })
+    except ValueError as exc:
+        return err(str(exc), status=400)
+    except Exception as exc:
+        return err(f"Run failed: {exc}", status=502)
+
+
+# --- Settings: data providers + LLM providers/models, editable from the app -
+# Everything here is additive/removable at runtime and persists in the
+# git-ignored data/*.json files (see genai_trader/config.py and
+# genai_trader/llm/overlay.py) — no restart or code edit required. Keys
+# entered here never come back in plaintext, only masked.
+
+@app.get("/api/v1/settings/data-providers")
+def list_data_providers_ep():
+    return ok({"providers": cfg.list_data_providers()})
+
+
+@app.post("/api/v1/settings/data-providers")
+def add_data_provider_ep(req: DataProviderReq):
+    try:
+        p = cfg.add_data_provider(req.name, req.rest_url, req.api_key, req.kind)
+        return ok(p, message="Added")
+    except ValueError as exc:
+        return err(str(exc), status=400)
+
+
+@app.delete("/api/v1/settings/data-providers/{provider_id}")
+def remove_data_provider_ep(provider_id: str):
+    cfg.remove_data_provider(provider_id)
+    return ok(message="Removed")
+
+
+@app.put("/api/v1/settings/data-providers/{provider_id}/enabled")
+def set_data_provider_enabled_ep(provider_id: str, req: EnabledReq):
+    cfg.set_data_provider_enabled(provider_id, req.enabled)
+    return ok(message="Updated")
+
+
+@app.put("/api/v1/settings/data-providers/{provider_id}/active")
+def set_active_data_provider_ep(provider_id: str):
+    cfg.set_active_data_provider(provider_id)
+    return ok(message="Active provider set")
+
+
+@app.get("/api/v1/settings/llm-providers")
+def list_llm_providers_ep():
+    data = [
+        {**p, "ready": provider_ready(p["id"]), "models": models_for(p["id"])}
+        for p in list_providers()
+    ]
+    return ok(data)
+
+
+@app.post("/api/v1/settings/llm-providers")
+def add_llm_provider_ep(req: LLMProviderReq):
+    try:
+        p = llm_overlay.add_custom_provider(
+            req.label, req.base_url, req.api_key, compat=req.compat,
+            has_free_tier=req.has_free_tier, docs_url=req.docs_url,
+        )
+        return ok(p, message="Added")
+    except ValueError as exc:
+        return err(str(exc), status=400)
+
+
+@app.delete("/api/v1/settings/llm-providers/{provider_id}")
+def remove_llm_provider_ep(provider_id: str):
+    llm_overlay.remove_provider(provider_id)
+    return ok(message="Removed")
+
+
+@app.post("/api/v1/settings/llm-providers/{provider_id}/restore")
+def restore_llm_provider_ep(provider_id: str):
+    llm_overlay.restore_provider(provider_id)
+    return ok(message="Restored")
+
+
+@app.put("/api/v1/settings/llm-providers/{provider_id}/key")
+def set_llm_provider_key_ep(provider_id: str, req: LLMKeyReq):
+    """Set/replace a provider's API key from the app — works for built-in
+    providers too (a non-technical alternative to editing .env.local; the
+    env var still wins if both are set)."""
+    llm_overlay.set_llm_secret(provider_id, req.api_key)
+    return ok(message="Key saved")
+
+
+@app.post("/api/v1/settings/llm-providers/{provider_id}/models")
+def add_llm_model_ep(provider_id: str, req: LLMModelReq):
+    try:
+        m = llm_overlay.add_custom_model(
+            provider_id, req.id, label=req.label, tier=req.tier,
+            input_price=req.input_price, output_price=req.output_price,
+            context=req.context, note=req.note,
+        )
+        return ok(m, message="Added")
+    except ValueError as exc:
+        return err(str(exc), status=400)
+
+
+@app.delete("/api/v1/settings/llm-providers/{provider_id}/models/{model_id}")
+def remove_llm_model_ep(provider_id: str, model_id: str):
+    llm_overlay.remove_model(provider_id, model_id)
+    return ok(message="Removed")
+
+
+@app.post("/api/v1/settings/llm-providers/{provider_id}/models/{model_id}/restore")
+def restore_llm_model_ep(provider_id: str, model_id: str):
+    llm_overlay.restore_model(provider_id, model_id)
+    return ok(message="Restored")
+
+
+@app.post("/api/v1/settings/llm-providers/{provider_id}/refresh")
+def refresh_llm_provider_ep(provider_id: str):
+    """Pull the provider's own current model list (best-effort) and merge it
+    in as "discovered" models — this is how new releases show up, and how
+    models the provider has retired quietly drop off, without a code change.
+    """
+    ids = list_available_models(provider_id)
+    if not ids:
+        return err(
+            "Couldn't fetch this provider's model list — check its API key, "
+            "or it may not expose a list-models endpoint this app knows how to call.",
+            status=400,
+        )
+    llm_overlay.set_discovered_models(provider_id, ids)
+    return ok({"discovered": ids}, message=f"Found {len(ids)} models")
 
 
 # --- static frontend (served last so /api takes priority) -----------------

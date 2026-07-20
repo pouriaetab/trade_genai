@@ -1,16 +1,23 @@
 # trade_genai
 
-**A workbench for generative-AI quant research — learn the theory, then build your own.**
+**A local, plug-and-play webapp for AI-assisted quant research — prototype an idea, then turn it into a working strategy.**
 
-trade_genai is a web app that does two things at once. It's a guided lab for
-working through *Generative AI for Trading and Asset Management* (Medina Ruiz &
-Chan) — run the book's ideas live, see real market data, and ask an AI to explain
-the parts that don't click. And it's an open platform for going past the book:
-pull in your own datasets, prototype strategies, and turn a plain-English
-question into runnable analysis with results in front of you.
+trade_genai is a single-user, run-on-your-own-machine platform built around three tabs:
 
-The goal is a place to *grow* — from following along, to forming your own
-hypotheses, to producing something new.
+- **Notebook / Lab** — a free-form scratchpad. Ask a question in plain English or
+  drop into raw Python; a live kernel runs it against real market data and shows
+  you the table, number, or chart. Good for quick exploration, one-off questions,
+  and following any AI-assisted train of thought.
+- **R&D** — structured, repeatable strategy workflows. Each strategy exposes its
+  own pipeline (fetch data → transform it → compute stats → run) as a click-through
+  panel, so you can inspect every intermediate result or run the whole thing in
+  one shot. This is where an idea from the Lab graduates into something reusable.
+- **Settings** — add, swap, or remove market-data providers and LLM
+  providers/models, all from the app, no code or config-file edits required.
+
+Every tab name — and the sub-tabs inside the Lab — is yours to rename; nothing
+here is hard-coded to a specific use case. Clone it, add your own API keys, and
+it's a self-contained research tool.
 
 ---
 
@@ -23,32 +30,40 @@ hypotheses, to producing something new.
 - **Drop into code anytime.** Flip the same panel from Prompt to Code and run
   Python directly. Chat and notebook share one kernel, so anything you fetch by
   asking is available to your code, and vice versa.
-- **Compare models while you learn.** A built-in picker spans free tiers (Gemini,
-  Groq, OpenRouter) and paid APIs (Anthropic, OpenAI, xAI), each labelled with a
-  cost estimate — so you can weigh answers and price as you go.
-- **Bring your own data.** The data layer is a thin, swappable client; today it
-  pulls split- and dividend-adjusted prices from the Massive API, and it's built
-  to extend to other sources and datasets.
-- **Keep your thinking.** Each project keeps its own memory — notes and chat
-  history persist across restarts, so a line of research survives the session.
+- **Compare models as you go.** A built-in picker spans free tiers (Gemini, Groq,
+  OpenRouter) and paid APIs (Anthropic, OpenAI, xAI), each labelled with a cost
+  estimate, so you can weigh answers and price together. The header always shows
+  which model is currently selected.
+- **Build out strategies in R&D.** Efficient Frontier ships as the first
+  example: pick symbols and a date range, fetch prices, transform them into daily
+  returns, compute annualized stats, then solve and plot the mean-variance
+  frontier — one step at a time or all at once. More strategies are meant to be
+  added the same way (see `genai_trader/strategies/`).
+- **Bring your own data and models — no code required.** A Settings tab lets
+  you add, disable, or remove market-data providers and LLM providers/models
+  from the app itself: paste a name, URL, and key, and it's available in the
+  pickers. Prefer the technical path? `.env.local` still works exactly the
+  same way and is auto-detected. Both are first-class; use whichever fits.
+- **Keep your thinking.** Each Lab tab keeps its own memory — notes, cells, and
+  chat context persist across restarts. Tabs can be archived (hidden but kept)
+  or deleted outright, so you can clear clutter without losing work.
 
 ## Who it's for
 
-- **Readers of the book** who want to *run* the concepts, not just read them.
-- **Anyone learning quantitative analysis** who wants a standalone sandbox to try
-  ideas, test intuitions, and see the numbers move.
-- **Me** — this is an active portfolio project. It shows how I design software
-  (typed data layer, provider-agnostic LLM layer, clean API), how I reason about
-  markets, and how I use AI as a tool for research rather than a black box.
+Anyone who wants a private, local, one-window place to explore market data and
+trading ideas with an AI pair — without wiring up a notebook server, a data
+subscription, and a chat client separately. Point it at your own API keys and
+it's a self-contained research desk: ask questions, write code, and grow an
+idea from "just checking a number" into a documented strategy pipeline.
 
 ---
 
 ## Architecture
 
 ```
-React (Vite) ──JSON /api──> FastAPI backend ──secure key──> LLM provider (Gemini, …)
+React (Vite) ──JSON /api──> FastAPI backend ──secure key──> LLM provider (Gemini, Claude, …)
                                    │
-                                   └── live Python kernel + genai_trader library ── Massive market data
+                                   └── live Python kernel + genai_trader library ── market data API
 ```
 
 The browser never holds an API key. It talks to the backend, which reads keys
@@ -59,14 +74,20 @@ persistent Python kernel that the chat and the notebook both share.
 
 ```
 genai_trader/        the library (reusable, importable, testable)
-  config.py          secure key loading — masked, never logged
-  data/massive.py    market-data client + split/dividend adjustment
-  metrics.py         daily_returns, sharpe_ratio, cumulative_returns
-  llm/               model registry + provider-agnostic chat client
-  lessons/           one module per book exercise (ch01_spy_returns, …)
-backend/app/         FastAPI — main, envelope, kernel, memory, agent
-frontend/            React + Vite app (App.jsx, components/, lib/api.js) + DESIGN_SYSTEM.css
-data/                per-project memory (git-ignored)
+  config.py          secure key loading + the data-provider registry (env or app-added)
+  data/massive.py     market-data client + split/dividend adjustment
+  metrics.py          daily_returns, sharpe_ratio, cumulative_returns
+  llm/                model registry + provider-agnostic chat client
+    overlay.py         user-editable layer on top of the curated registry (add/remove, sticky)
+  strategies/          R&D strategy modules (efficient_frontier, …)
+  lessons/             optional worked examples
+backend/app/          FastAPI — main, envelope, kernel, memory
+frontend/             React + Vite app (App.jsx, components/, lib/api.js) + DESIGN_SYSTEM.css
+data/                 git-ignored: per-tab memory, plus provider/model settings
+  memory.json          Lab tabs (cells, notes) and per-project memory
+  providers.json        app-added data providers (no keys)
+  model_registry.json    LLM registry overlay (custom/removed providers & models)
+  secrets.json           app-entered API keys (never committed, never returned in plaintext)
 ```
 
 ## Quick start
@@ -81,6 +102,41 @@ cp .env.example .env.local        # add your keys (see below)
 `run.sh` sets up the Python venv and frontend deps, then starts both servers.
 Open http://127.0.0.1:5177.
 
+## Making it yours
+
+- **Rename the top tabs.** Double-click "Notebook / Lab", "R&D", or "Settings"
+  in the top nav to rename them — the label is saved in your browser, no code
+  changes needed.
+- **Rename or organize Lab tabs.** New tabs default to "Notebook 1", "Notebook
+  2", etc. — double-click any tab to rename it to whatever fits (a ticker, a
+  question, a date). Use the archive button (⤓) to hide a tab without losing
+  its cells, and the "Archived" list to restore or permanently delete it.
+- **Add, swap, or remove a market-data provider — from the Settings tab.**
+  Give it a name, its REST base URL, and an API key; it's available
+  immediately, no restart. Works out of the box for any Polygon-compatible API
+  (same aggs/dividends response shape as Massive). Point-and-click for
+  non-technical users; `.env.local` (`MASSIVE_API_KEY`, `MASSIVE_REST_URL`)
+  still works for anyone who prefers config files, and is auto-detected as the
+  built-in "Massive" provider.
+- **Add, swap, or remove LLM providers and models — also from Settings.** The
+  picker ships with curated recent models from Gemini, Groq, OpenRouter,
+  Anthropic, OpenAI, and xAI; remove any of them you don't want. Add a custom
+  model id to an existing provider, or add a whole new provider (anything
+  speaking the OpenAI-compatible chat schema — most APIs do). "Refresh
+  models" pulls a provider's own current model list so new releases show up
+  without a code change. Every change here is sticky across restarts,
+  stored in the git-ignored `data/` folder alongside your session memory.
+- **Add a strategy to R&D.** Each strategy is a small Python module under
+  `genai_trader/strategies/` (fetch → transform → stats → result functions) plus
+  a matching React component under `frontend/src/components/RD/`, registered in
+  `frontend/src/components/RD/index.jsx`. `efficient_frontier.py` is a template
+  to copy from.
+- **A different data response shape.** The Settings tab handles *any*
+  Polygon-compatible REST API without touching code. A genuinely different
+  shape needs a small parser added to `genai_trader/data/massive.py` — that's
+  the one place that turns a provider's raw JSON into the OHLCV table the rest
+  of the app expects.
+
 ## Models: free and paid
 
 The chat picker has two dropdowns — provider, then model — each labelled `free`
@@ -88,33 +144,27 @@ or `paid` with a cost hint. Add a key in `.env.local` to enable a provider:
 
 | Provider | Tier | Key | Notes |
 |----------|------|-----|-------|
-| Google Gemini | free | `GEMINI_API_KEY` | generous free tier, 1M context |
+| Google Gemini | free | `GEMINI_API_KEY` | generous free tier, large context |
 | Groq | free | `GROQ_API_KEY` | fast open models (Llama) |
 | OpenRouter | free | `OPENROUTER_API_KEY` | many models, one key |
-| Anthropic Claude | paid | `ANTHROPIC_API_KEY` | needs an API key — a Claude.ai subscription is not one |
+| Anthropic Claude | paid | `ANTHROPIC_API_KEY` | needs an API key from the Developer Platform — a Claude.ai (Pro/Max) subscription does not grant API access |
 | OpenAI | paid | `OPENAI_API_KEY` | GPT-5 family |
-| xAI Grok | paid | `XAI_API_KEY` | 1M-context flagship |
+| xAI Grok | paid | `XAI_API_KEY` | large-context flagship |
 
 Get a free Gemini key at [ai.google.dev](https://ai.google.dev) to start with no
-cost. Prices live in `genai_trader/llm/registry.py` — verify on each provider's
-page, as they change.
+cost. Curated prices live in `genai_trader/llm/registry.py` — verify on each
+provider's page, as they change. Every key above can also be entered from the
+Settings tab instead of `.env.local` (env still wins if both are set), and any
+provider/model can be added or removed there too. The header's "using: …"
+pill always shows whichever provider/model is currently selected.
 
 ## Keys stay private
 
 Every key lives in `.env.local`, which is git-ignored (only the `.env.example`
 template is tracked). Keys are loaded once and only ever shown masked (like
-`abcd…wxyz`) — never printed, logged, or sent to the browser. No secrets or local
-paths are committed.
-
-## Try Chapter 1 from the terminal
-
-```bash
-python -m genai_trader.lessons.ch01_spy_returns
-```
-
-Fetches the last 100 trading days of SPY, adjusts for splits *and* dividends,
-computes daily returns, and prints the raw data plus a tidy `[date, daily_return]`
-table.
+`abcd…wxyz`) — never printed, logged, or sent to the browser. The masked key
+shown in the header is just a sanity check that the right key loaded; no
+secrets or local paths are committed.
 
 ## Tech
 
@@ -124,11 +174,11 @@ provider-agnostic LLM layer. Backend responses use a standard envelope
 
 ## Status and roadmap
 
-Early and active. Working today: the Chapter 1–2 lab (notebook + agentic chat +
-memory), the market-data layer, and the model registry. Next: more chapter
-lessons, a strategies module with backtests, additional data sources, and
-streaming chat responses.
+Early and active. Working today: the Lab (notebook + agentic chat + memory,
+with pinning and tab archiving), the market-data layer, the model registry, and
+the first R&D strategy (Efficient Frontier). Next: more strategies, backtests,
+additional data sources, and streaming chat responses.
 
 ---
 
-*Educational and research software. Not investment advice; use at your own risk.*
+*Research and educational software. Not investment advice; use at your own risk.*

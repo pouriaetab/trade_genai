@@ -15,7 +15,8 @@ from .registry import (
     estimate_cost,
     words_to_tokens,
 )
-from .client import chat, provider_ready, ProviderError
+from .client import chat, provider_ready, ProviderError, list_available_models
+from . import overlay
 
 __all__ = [
     "PROVIDERS",
@@ -27,4 +28,6 @@ __all__ = [
     "chat",
     "provider_ready",
     "ProviderError",
+    "list_available_models",
+    "overlay",
 ]

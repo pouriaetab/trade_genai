@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { post } from "../lib/api.js";
+import { useElapsed } from "../lib/useElapsed.js";
 
 const uid = () => (globalThis.crypto?.randomUUID?.() || `c${Date.now()}${Math.random()}`);
+const DEFAULT_MAX_TOKENS = 4096;
 
 function summarizeExec(exec) {
   if (!exec) return "";
@@ -15,8 +17,9 @@ function summarizeExec(exec) {
 }
 
 function ExecOutput({ exec }) {
+  const elapsed = useElapsed(!!exec?.running);
   if (!exec) return null;
-  if (exec.running) return <div className="out"><pre style={{ color: "var(--color-accent)" }}>running…</pre></div>;
+  if (exec.running) return <div className="out"><pre style={{ color: "var(--color-accent)" }}>running… {elapsed}s</pre></div>;
   const nothing = !exec.stdout && !exec.result_html && !exec.result_text && !(exec.figures || []).length && !exec.error;
   return (
     <div className="out">
@@ -30,12 +33,15 @@ function ExecOutput({ exec }) {
   );
 }
 
-export default function Workbench({ models, cells, onCells }) {
+export default function Workbench({ models, cells, onCells, onModelChange }) {
   const [providerId, setProviderId] = useState("");
   const [modelId, setModelId] = useState("");
   const [mode, setMode] = useState("prompt");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [maxTokens, setMaxTokens] = useState(DEFAULT_MAX_TOKENS);
+  const busyElapsed = useElapsed(busy);
 
   useEffect(() => {
     if (!models.length) return;
@@ -51,8 +57,19 @@ export default function Workbench({ models, cells, onCells }) {
   const provider = useMemo(() => models.find((p) => p.id === providerId) || null, [models, providerId]);
   const model = useMemo(() => (provider ? provider.models.find((m) => m.id === modelId) : null), [provider, modelId]);
 
+  // Let the header/status bar reflect whatever model is currently selected here.
+  useEffect(() => {
+    if (provider && model) {
+      onModelChange?.({ providerLabel: provider.label, modelLabel: model.label, tier: model.tier, ready: provider.ready });
+    }
+  }, [provider, model]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const patch = (id, p) => onCells(cells.map((c) => (c.id === id ? { ...c, ...p } : c)));
   const removeCell = (id) => onCells(cells.filter((c) => c.id !== id));
+  const togglePin = (id) => patch(id, { pinned: !cells.find((c) => c.id === id)?.pinned });
+  const jumpTo = (id) => document.getElementById(`cell-${id}`)
+    ?.scrollIntoView({ behavior: "smooth", block: "center" });
+  const pinned = cells.filter((c) => c.pinned);
 
   function buildMessages(list) {
     const msgs = [];
@@ -98,7 +115,9 @@ export default function Workbench({ models, cells, onCells }) {
     onCells([...base, { id, kind: "prompt", input, answer: "…" }]);
     setBusy(true);
     const messages = [...buildMessages(base), { role: "user", content: input }];
-    const r = await post("/api/v1/agent", { provider: provider.id, model: model.id, messages, max_tokens: 1024 });
+    const r = await post("/api/v1/agent", {
+      provider: provider.id, model: model.id, messages, max_tokens: Number(maxTokens) || DEFAULT_MAX_TOKENS,
+    });
     setBusy(false);
     if (!r.success) {
       onCells([...base, { id, kind: "prompt", input, answer: r.message, meta: "error" }]);
@@ -133,6 +152,9 @@ export default function Workbench({ models, cells, onCells }) {
         <select className="mini" value={modelId} onChange={(e) => setModelId(e.target.value)}>
           {(provider?.models || []).map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
         </select>
+        <input className="mini max-tokens" type="number" min="256" max="8192" step="256"
+          value={maxTokens} onChange={(e) => setMaxTokens(e.target.value)}
+          title="Max reply length in tokens — raise this if longer code responses get cut off" />
         <div className="mode-toggle">
           <button className={mode === "prompt" ? "on" : "ghost"} onClick={() => setMode("prompt")}>Prompt</button>
           <button className={mode === "code" ? "on" : "ghost"} onClick={() => setMode("code")}>Code</button>
@@ -141,7 +163,7 @@ export default function Workbench({ models, cells, onCells }) {
 
       <div className="panel-body">
         {/* New cell — always on top; new results push older ones down */}
-        <div className="new-cell">
+        <div className={"new-cell" + (expanded ? " expanded" : "")}>
           <textarea value={text}
             style={mode === "code" ? { fontFamily: "var(--font-mono)", fontSize: "12.5px" } : undefined}
             placeholder={mode === "prompt"
@@ -152,8 +174,25 @@ export default function Workbench({ models, cells, onCells }) {
               const submit = mode === "code" ? (e.shiftKey || e.metaKey || e.ctrlKey) : !e.shiftKey;
               if (e.key === "Enter" && submit) { e.preventDefault(); send(); }
             }} />
-          <button className="brand" onClick={send} disabled={busy}>{mode === "code" ? "Run" : "Send"}</button>
+          <div className="new-cell-actions">
+            <button className="ghost" title={expanded ? "Collapse" : "Expand — bigger box for long prompts/code"}
+              onClick={() => setExpanded((v) => !v)}>{expanded ? "⤡" : "⤢"}</button>
+            <button className="brand" onClick={send} disabled={busy}>
+              {busy ? `Thinking… ${busyElapsed}s` : (mode === "code" ? "Run" : "Send")}
+            </button>
+          </div>
         </div>
+        {pinned.length > 0 && (
+          <div className="pinned-strip">
+            <span className="pinned-label">Pinned</span>
+            {pinned.map((c) => (
+              <button key={c.id} className="pinned-chip" onClick={() => jumpTo(c.id)}
+                title={c.kind === "code" ? c.code : c.input}>
+                ★ {(c.kind === "code" ? c.code : c.input || c.answer || "").slice(0, 28) || "(cell)"}
+              </button>
+            ))}
+          </div>
+        )}
         {model && (
           <p className="model-meta">
             <span className={"badge " + model.tier}>{model.tier}</span> {model.cost_hint}
@@ -169,10 +208,13 @@ export default function Workbench({ models, cells, onCells }) {
             automatically.</p>
           )}
           {[...cells].reverse().map((c) => (
-            <div key={c.id} className="cell-unit">
+            <div key={c.id} id={`cell-${c.id}`} className={"cell-unit" + (c.pinned ? " pinned" : "")}>
               <div className="cell-bar">
                 <span className="cell-tag">{c.kind === "code" ? "code" : "prompt"}</span>
                 <div className="spacer" />
+                <button className={"ghost pin-btn" + (c.pinned ? " on" : "")}
+                  title={c.pinned ? "Unpin" : "Pin as important"}
+                  onClick={() => togglePin(c.id)}>{c.pinned ? "★" : "☆"}</button>
                 <button className="ghost" title="Delete cell" onClick={() => removeCell(c.id)}>×</button>
               </div>
               {c.kind === "prompt" && c.input && <div className="msg user"><span>{c.input}</span></div>}

@@ -1,15 +1,24 @@
 """Provider-agnostic chat client.
 
 `chat(provider, model, messages)` sends an OpenAI-style message list to any
-supported provider and returns a normalized dict. The API key is read from the
-provider's env var (loaded from .env.local) at call time — never hard-coded.
+supported provider and returns a normalized dict. For curated providers the
+API key is read from the provider's env var (loaded from .env.local) at call
+time — never hard-coded. For a custom provider added via the app's Settings
+tab, the key is read from the git-ignored `data/secrets.json` store instead.
 
-Supported: gemini, groq, openrouter, anthropic, openai, xai.
-Groq / xAI / OpenRouter use the OpenAI-compatible chat/completions schema.
+Built-in wire formats: gemini, anthropic, and "OpenAI-compatible" (used by
+groq, xai, openrouter, openai, and any custom provider added with
+compat="openai" — that's most providers, since the OpenAI chat/completions
+schema is a de facto standard).
 
 On an HTTP error we raise ProviderError with the provider's own message (not a
-bare status code), and for Gemini we append the models your key can actually use
-so a wrong model name is self-correcting.
+bare status code), and for Gemini we append the models your key can actually
+use so a wrong model name is self-correcting.
+
+`list_available_models(provider_id)` calls a provider's own list-models
+endpoint (best-effort) — this is what backs the "Refresh" action in Settings,
+letting the model picker pick up new releases (or drop retired ones) without a
+code change.
 """
 from __future__ import annotations
 
@@ -18,6 +27,7 @@ import os
 import requests
 
 from ..config import _load_dotenv
+from . import overlay
 from .registry import PROVIDERS, get_model
 
 DEFAULT_TIMEOUT = 60
@@ -29,23 +39,34 @@ class ProviderError(RuntimeError):
 
 
 def _api_key(provider_id: str) -> str:
+    """Env var takes priority (the technical path); a key entered in the app's
+    Settings tab (stored in overlay/data/secrets.json) is the fallback — so
+    either route works, for built-in or custom providers alike."""
     _load_dotenv()
     p = PROVIDERS.get(provider_id)
-    if not p:
+    if p:
+        key = os.environ.get(p.env_var, "").strip() or overlay.get_llm_secret(provider_id)
+        if not key:
+            raise ProviderError(
+                f"No API key for {p.label}. Add {p.env_var} to .env.local, or add a key "
+                f"in Settings. See {p.docs_url}."
+            )
+        return key
+    cp = overlay.get_custom_provider(provider_id)
+    if not cp:
         raise ProviderError(f"Unknown provider: {provider_id}")
-    key = os.environ.get(p.env_var, "").strip()
+    key = overlay.get_llm_secret(provider_id)
     if not key:
-        raise ProviderError(
-            f"No API key for {p.label}. Add {p.env_var} to .env.local to enable it. "
-            f"See {p.docs_url}."
-        )
+        raise ProviderError(f"No API key for {cp.get('label', provider_id)}. Add one in Settings.")
     return key
 
 
 def provider_ready(provider_id: str) -> bool:
     _load_dotenv()
     p = PROVIDERS.get(provider_id)
-    return bool(p and os.environ.get(p.env_var, "").strip())
+    if p:
+        return bool(os.environ.get(p.env_var, "").strip() or overlay.get_llm_secret(provider_id))
+    return bool(overlay.get_llm_secret(provider_id))
 
 
 def _err_message(resp) -> str:
@@ -64,20 +85,26 @@ def _err_message(resp) -> str:
 
 # --- OpenAI-compatible providers -----------------------------------------
 
-_OPENAI_COMPAT = {
+_OPENAI_COMPAT_URLS = {
     "openai": "https://api.openai.com/v1/chat/completions",
     "groq": "https://api.groq.com/openai/v1/chat/completions",
     "xai": "https://api.x.ai/v1/chat/completions",
     "openrouter": "https://openrouter.ai/api/v1/chat/completions",
 }
+_OPENAI_COMPAT_MODELS_URLS = {
+    "openai": "https://api.openai.com/v1/models",
+    "groq": "https://api.groq.com/openai/v1/models",
+    "xai": "https://api.x.ai/v1/models",
+    "openrouter": "https://openrouter.ai/api/v1/models",
+}
 
 
-def _chat_openai_compat(provider_id, label, model, messages, max_tokens, temperature):
-    key = _api_key(provider_id)
+def _chat_openai_compat_url(url: str, label: str, key: str, model: str,
+                            messages: list[dict], max_tokens: int, temperature: float) -> dict:
     body = {"model": model, "messages": messages,
             "max_tokens": max_tokens, "temperature": temperature}
     r = requests.post(
-        _OPENAI_COMPAT[provider_id], json=body,
+        url, json=body,
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
         timeout=DEFAULT_TIMEOUT,
     )
@@ -159,16 +186,66 @@ def _chat_gemini(model, messages, max_tokens, temperature):
 
 
 def chat(provider: str, model: str, messages: list[dict],
-         max_tokens: int = 1024, temperature: float = 0.7) -> dict:
+         max_tokens: int = 4096, temperature: float = 0.7) -> dict:
     """Send a chat request. `messages` = [{"role","content"}]. Returns
     {provider, model, text, usage}."""
     label = PROVIDERS[provider].label if provider in PROVIDERS else provider
-    if provider in _OPENAI_COMPAT:
-        result = _chat_openai_compat(provider, label, model, messages, max_tokens, temperature)
+    if provider in _OPENAI_COMPAT_URLS:
+        result = _chat_openai_compat_url(
+            _OPENAI_COMPAT_URLS[provider], label, _api_key(provider), model, messages, max_tokens, temperature
+        )
     elif provider == "anthropic":
         result = _chat_anthropic(model, messages, max_tokens, temperature)
     elif provider == "gemini":
         result = _chat_gemini(model, messages, max_tokens, temperature)
     else:
-        raise ProviderError(f"Unsupported provider: {provider}")
+        cp = overlay.get_custom_provider(provider)
+        if cp and cp.get("compat", "openai") == "openai" and cp.get("base_url"):
+            url = cp["base_url"].rstrip("/") + "/chat/completions"
+            result = _chat_openai_compat_url(
+                url, cp.get("label", provider), _api_key(provider), model, messages, max_tokens, temperature
+            )
+        else:
+            raise ProviderError(f"Unsupported provider: {provider}")
     return {"provider": provider, "model": model, **result}
+
+
+# --- model discovery (backs the Settings "Refresh" action) ----------------
+
+def list_available_models(provider_id: str) -> list[str]:
+    """Best-effort: ask the provider for the models its key can use right now.
+
+    Returns an empty list if the provider has no key, has no list-models
+    endpoint we know how to call, or the request fails — callers should treat
+    that as "nothing new to report", not an error.
+    """
+    _load_dotenv()
+    try:
+        if provider_id == "gemini":
+            key = os.environ.get(PROVIDERS["gemini"].env_var, "").strip()
+            return _gemini_models(key) if key else []
+        if provider_id == "anthropic":
+            key = os.environ.get(PROVIDERS["anthropic"].env_var, "").strip()
+            if not key:
+                return []
+            r = requests.get(
+                "https://api.anthropic.com/v1/models",
+                headers={"x-api-key": key, "anthropic-version": "2023-06-01"}, timeout=20,
+            )
+            if r.status_code >= 400:
+                return []
+            return [m.get("id") for m in r.json().get("data", []) if m.get("id")]
+        url = _OPENAI_COMPAT_MODELS_URLS.get(provider_id)
+        if not url:
+            cp = overlay.get_custom_provider(provider_id)
+            if cp and cp.get("base_url"):
+                url = cp["base_url"].rstrip("/") + "/models"
+        if not url:
+            return []
+        key = _api_key(provider_id)
+        r = requests.get(url, headers={"Authorization": f"Bearer {key}"}, timeout=20)
+        if r.status_code >= 400:
+            return []
+        return [m.get("id") for m in r.json().get("data", []) if m.get("id")]
+    except Exception:
+        return []

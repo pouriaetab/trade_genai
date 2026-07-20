@@ -18,6 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
+from . import overlay as _overlay
+
 # Rough text<->token conversion. ~1.33 tokens per English word (~0.75 words/token).
 TOKENS_PER_WORD = 1.33
 
@@ -57,6 +59,19 @@ PROVIDERS: dict[str, Provider] = {
                   1_000_000, "Free tier ~1,500 req/day. Fast, multimodal."),
             Model("gemini-2.5-pro", "Gemini 2.5 Pro", "free", 2.50, 15.00,
                   1_000_000, "Free tier ~50 req/day; strongest Gemini reasoning."),
+            # 1. Your primary 3.5 model (keep this as default)
+            Model("gemini-3.5-flash", "Gemini 3.5 Flash", "free", 0.15, 0.60,
+                  1_000_000, "Latest 3.5 Flash. Excellent speed and reasoning."),
+            # 3. Use 2.0 Flash Lite (Allowed by your key, highly cost/rate efficient)
+            Model("gemini-2.0-flash-lite", "Gemini 2.0 Flash-Lite", "free", 0.075, 0.30,
+                  1_000_000, "Super fast, lightweight model available on the free tier."),
+            # 4. Use 2.0 Flash (Standard speed fallback allowed by your key)
+            Model("gemini-2.0-flash", "Gemini 2.0 Flash", "free", 0.15, 0.60,
+                  1_000_000, "Standard 2.0 Flash model allowed on your current tier."),
+            Model("gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite", "free", 0.075, 0.30,
+                  1_000_000, "Excellent free fallback — 500 requests per day available."),
+            Model("gemini-3-flash", "Gemini 3 Flash", "free", 0.15, 0.60,
+                  1_000_000, "Standard preview Flash model with 20 requests per day."),
         ],
     ),
     "groq": Provider(
@@ -119,35 +134,78 @@ PROVIDERS: dict[str, Provider] = {
 }
 
 
-# --- Helpers --------------------------------------------------------------
+# --- Helpers ----------------------------------------------------------------
+# Every helper below merges the curated PROVIDERS/Model defaults with the
+# user-editable overlay (genai_trader.llm.overlay): removed defaults are
+# hidden, custom providers/models are appended, and "discovered" models (from
+# a provider's own list-models endpoint, via a Settings "Refresh" action) fill
+# in anything new the curated list doesn't have yet. This is what lets a user
+# add or remove providers/models from the app, with changes sticking across
+# restarts, without touching this file.
 
 def list_providers() -> list[dict]:
-    """Providers for the first dropdown (id, label, free-tier flag)."""
-    return [
+    """Providers for the first dropdown (id, label, free-tier flag, source)."""
+    ov = _overlay.load()
+    removed = set(ov.get("removed_providers", []))
+    out = [
         {"id": p.id, "label": p.label, "has_free_tier": p.has_free_tier,
-         "docs_url": p.docs_url, "env_var": p.env_var}
-        for p in PROVIDERS.values()
+         "docs_url": p.docs_url, "env_var": p.env_var, "source": "default"}
+        for p in PROVIDERS.values() if p.id not in removed
     ]
+    for pid, cp in ov.get("custom_providers", {}).items():
+        out.append({
+            "id": pid, "label": cp.get("label", pid), "has_free_tier": bool(cp.get("has_free_tier")),
+            "docs_url": cp.get("docs_url", ""), "env_var": None, "source": "custom",
+            "compat": cp.get("compat", "openai"), "base_url": cp.get("base_url", ""),
+        })
+    return out
 
 
 def models_for(provider_id: str) -> list[dict]:
-    """Models for the second dropdown, each with a cost hint for ~1k words."""
+    """Models for the second dropdown, each with a cost hint and a source tag
+    ("default" | "custom" | "discovered")."""
+    ov = _overlay.load()
+    removed = set(ov.get("removed_models", {}).get(provider_id, []))
+    out: list[dict] = []
     p = PROVIDERS.get(provider_id)
-    if not p:
-        return []
-    out = []
-    for m in p.models:
-        d = asdict(m)
-        d["cost_hint"] = _cost_hint(m)
+    if p:
+        for m in p.models:
+            if m.id in removed:
+                continue
+            d = asdict(m)
+            d["cost_hint"] = _cost_hint(m)
+            d["source"] = "default"
+            out.append(d)
+    for m in ov.get("custom_models", {}).get(provider_id, []):
+        if m["id"] in removed:
+            continue
+        model = Model(
+            id=m["id"], label=m.get("label", m["id"]), tier=m.get("tier", "paid"),
+            input_price=float(m.get("input_price", 0.0)), output_price=float(m.get("output_price", 0.0)),
+            context=int(m.get("context", 128_000)), note=m.get("note", ""),
+        )
+        d = asdict(model)
+        d["cost_hint"] = _cost_hint(model)
+        d["source"] = "custom"
         out.append(d)
+    known_ids = {d["id"] for d in out}
+    for mid in ov.get("discovered_models", {}).get(provider_id, []):
+        if mid in removed or mid in known_ids:
+            continue
+        out.append({
+            "id": mid, "label": mid, "tier": "unknown", "input_price": 0.0, "output_price": 0.0,
+            "context": 0, "note": "discovered from the provider's model list — check its pricing page",
+            "cost_hint": "check provider pricing", "source": "discovered",
+        })
     return out
 
 
 def get_model(provider_id: str, model_id: str) -> Optional[Model]:
-    p = PROVIDERS.get(provider_id)
-    if not p:
-        return None
-    return next((m for m in p.models if m.id == model_id), None)
+    for d in models_for(provider_id):
+        if d["id"] == model_id:
+            return Model(id=d["id"], label=d["label"], tier=d["tier"], input_price=d["input_price"],
+                        output_price=d["output_price"], context=d["context"], note=d.get("note", ""))
+    return None
 
 
 def words_to_tokens(words: float) -> int:
