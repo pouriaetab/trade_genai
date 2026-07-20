@@ -13,6 +13,7 @@ from .registry import (
     models_for,
     get_model,
     estimate_cost,
+    cost_from_tokens,
     words_to_tokens,
 )
 from .client import chat, provider_ready, ProviderError, list_available_models
@@ -24,6 +25,7 @@ __all__ = [
     "models_for",
     "get_model",
     "estimate_cost",
+    "cost_from_tokens",
     "words_to_tokens",
     "chat",
     "provider_ready",

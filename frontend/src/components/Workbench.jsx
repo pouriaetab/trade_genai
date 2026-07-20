@@ -4,6 +4,21 @@ import { useElapsed } from "../lib/useElapsed.js";
 
 const uid = () => (globalThis.crypto?.randomUUID?.() || `c${Date.now()}${Math.random()}`);
 const DEFAULT_MAX_TOKENS = 4096;
+const TOKENS_PER_WORD = 1.33; // rough, matches the backend's estimate
+
+function estimateTokens(text) {
+  const words = (text || "").trim().split(/\s+/).filter(Boolean).length;
+  return Math.round(words * TOKENS_PER_WORD);
+}
+
+// The model's raw reply repeats the code inside a ```python fence, which is
+// redundant once that code is pulled out into its own editable box below —
+// strip the fence(s) from the prose so it isn't shown twice.
+const CODE_FENCE_RE = /```(?:python|py)?\s*\n[\s\S]*?```/g;
+function proseOnly(answer, hasExtractedCode) {
+  if (!answer || !hasExtractedCode) return answer;
+  return answer.replace(CODE_FENCE_RE, "").trim();
+}
 
 function summarizeExec(exec) {
   if (!exec) return "";
@@ -40,7 +55,6 @@ export default function Workbench({ models, cells, onCells, onModelChange }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const [maxTokens, setMaxTokens] = useState(DEFAULT_MAX_TOKENS);
   const busyElapsed = useElapsed(busy);
 
   useEffect(() => {
@@ -116,7 +130,7 @@ export default function Workbench({ models, cells, onCells, onModelChange }) {
     setBusy(true);
     const messages = [...buildMessages(base), { role: "user", content: input }];
     const r = await post("/api/v1/agent", {
-      provider: provider.id, model: model.id, messages, max_tokens: Number(maxTokens) || DEFAULT_MAX_TOKENS,
+      provider: provider.id, model: model.id, messages, max_tokens: DEFAULT_MAX_TOKENS,
     });
     setBusy(false);
     if (!r.success) {
@@ -124,10 +138,13 @@ export default function Workbench({ models, cells, onCells, onModelChange }) {
       return;
     }
     const d = r.data;
+    const usage = d.usage || {};
+    const tokBit = (usage.input_tokens != null && usage.output_tokens != null)
+      ? `${usage.input_tokens}→${usage.output_tokens} tok · ` : "";
     onCells([...base, {
       id, kind: "prompt", input, answer: d.text, code: d.code || null,
       execution: d.execution || null, execSummary: summarizeExec(d.execution),
-      meta: `${d.model} · ~$${(d.est_cost_usd || 0).toFixed(4)}`,
+      meta: `${d.model} · ${tokBit}~$${(d.est_cost_usd || 0).toFixed(4)}`,
     }]);
   }
 
@@ -152,9 +169,6 @@ export default function Workbench({ models, cells, onCells, onModelChange }) {
         <select className="mini" value={modelId} onChange={(e) => setModelId(e.target.value)}>
           {(provider?.models || []).map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
         </select>
-        <input className="mini max-tokens" type="number" min="256" max="8192" step="256"
-          value={maxTokens} onChange={(e) => setMaxTokens(e.target.value)}
-          title="Max reply length in tokens — raise this if longer code responses get cut off" />
         <div className="mode-toggle">
           <button className={mode === "prompt" ? "on" : "ghost"} onClick={() => setMode("prompt")}>Prompt</button>
           <button className={mode === "code" ? "on" : "ghost"} onClick={() => setMode("code")}>Code</button>
@@ -180,6 +194,10 @@ export default function Workbench({ models, cells, onCells, onModelChange }) {
             <button className="brand" onClick={send} disabled={busy}>
               {busy ? `Thinking… ${busyElapsed}s` : (mode === "code" ? "Run" : "Send")}
             </button>
+            {mode === "prompt" && text.trim() &&
+              <span className="token-estimate" title="Rough estimate from word count — the real count (and its cost) shows on the reply once it comes back">
+                ~{estimateTokens(text)} tok
+              </span>}
           </div>
         </div>
         {pinned.length > 0 && (
@@ -219,7 +237,8 @@ export default function Workbench({ models, cells, onCells, onModelChange }) {
               </div>
               {c.kind === "prompt" && c.input && <div className="msg user"><span>{c.input}</span></div>}
               {c.answer === "…" ? <span className="dots">…</span>
-                : c.answer && <div className="answer">{c.answer}</div>}
+                : proseOnly(c.answer, c.code != null) &&
+                  <div className="answer">{proseOnly(c.answer, c.code != null)}</div>}
               {c.code != null && (
                 <div className="code-block">
                   <div className="code-head">

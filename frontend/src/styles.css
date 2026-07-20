@@ -55,13 +55,13 @@ main { max-width:1280px; margin:0 auto; padding:22px; }
 /* Workbench (unified prompt + code + results) */
 .workbench .panel-head { flex-wrap:wrap; }
 select.mini { padding:4px 8px; font-size:var(--fs-xs); max-width:170px; }
-input.mini.max-tokens { padding:4px 8px; font-size:var(--fs-xs); width:80px; }
 /* New-cell input pinned at the top of the workbench — resizable + one-click expand */
 .new-cell { display:flex; gap:8px; margin-bottom:10px; align-items:flex-end; }
 .new-cell textarea { flex:1; min-height:52px; max-height:400px; resize:vertical; transition:min-height .15s ease; }
 .new-cell.expanded textarea { min-height:280px; }
-.new-cell-actions { display:flex; flex-direction:column; gap:6px; }
+.new-cell-actions { display:flex; flex-direction:column; gap:6px; align-items:flex-end; }
 .new-cell-actions .ghost { padding:6px 9px; line-height:1; }
+.token-estimate { font-size:10px; color:var(--color-text-muted); font-family:var(--font-mono); }
 
 .pinned-strip { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
   margin:0 0 12px; padding:8px 10px; border:1px solid var(--color-border);

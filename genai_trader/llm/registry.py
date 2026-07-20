@@ -214,13 +214,24 @@ def words_to_tokens(words: float) -> int:
 
 def estimate_cost(provider_id: str, model_id: str,
                   words_in: float, words_out: float) -> float:
-    """Estimated USD for an exchange of the given word counts."""
+    """Estimated USD for an exchange, from word counts (used before a real
+    token count is known, e.g. for a live "roughly N tokens" hint as you type)."""
     m = get_model(provider_id, model_id)
     if not m:
         return 0.0
     ti = words_to_tokens(words_in)
     to = words_to_tokens(words_out)
     return ti / 1e6 * m.input_price + to / 1e6 * m.output_price
+
+
+def cost_from_tokens(provider_id: str, model_id: str,
+                     input_tokens: int, output_tokens: int) -> float:
+    """Actual USD cost from the provider's own reported token counts — more
+    accurate than the word-count estimate above, used once a response comes back."""
+    m = get_model(provider_id, model_id)
+    if not m:
+        return 0.0
+    return (input_tokens or 0) / 1e6 * m.input_price + (output_tokens or 0) / 1e6 * m.output_price
 
 
 def _cost_hint(m: Model) -> str:

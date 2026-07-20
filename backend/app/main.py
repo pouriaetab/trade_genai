@@ -57,7 +57,7 @@ import pandas as pd  # noqa: E402
 from genai_trader import config as cfg  # noqa: E402
 from genai_trader.llm import (  # noqa: E402
     list_providers, models_for, provider_ready, chat as llm_chat,
-    estimate_cost, ProviderError, list_available_models, overlay as llm_overlay,
+    estimate_cost, cost_from_tokens, ProviderError, list_available_models, overlay as llm_overlay,
 )
 from genai_trader import strategies as strat  # noqa: E402
 from .envelope import ok, err  # noqa: E402
@@ -205,6 +205,21 @@ def kernel_reset():
 
 # --- chat -----------------------------------------------------------------
 
+def _attach_cost(result: dict, provider: str, model: str, messages: list[dict]) -> dict:
+    """Prefer the provider's own reported token counts for cost (accurate);
+    fall back to a word-count estimate only if the provider didn't report usage."""
+    usage = result.get("usage") or {}
+    tok_in, tok_out = usage.get("input_tokens"), usage.get("output_tokens")
+    if tok_in is not None and tok_out is not None:
+        cost = cost_from_tokens(provider, model, tok_in, tok_out)
+    else:
+        words_in = sum(len(m.get("content", "").split()) for m in messages)
+        words_out = len(result.get("text", "").split())
+        cost = estimate_cost(provider, model, words_in, words_out)
+    result["est_cost_usd"] = round(cost, 5)
+    return result
+
+
 @app.post("/api/v1/chat")
 def chat(req: ChatReq):
     try:
@@ -213,13 +228,7 @@ def chat(req: ChatReq):
         return err(str(exc), status=400)
     except Exception as exc:  # upstream API error
         return err(f"Provider request failed: {exc}", status=502)
-    # attach a rough cost estimate for the exchange
-    words_in = sum(len(m.get("content", "").split()) for m in req.messages)
-    words_out = len(result.get("text", "").split())
-    result["est_cost_usd"] = round(
-        estimate_cost(req.provider, req.model, words_in, words_out), 5
-    )
-    return ok(result)
+    return ok(_attach_cost(result, req.provider, req.model, req.messages))
 
 
 # --- agent (chat that can run code in the kernel) -------------------------
@@ -272,16 +281,15 @@ def agent(req: AgentReq):
     code = _extract_code(text)
     execution = kernel.run(code) if code else None
 
-    words_in = sum(len(m.get("content", "").split()) for m in req.messages)
-    words_out = len(text.split())
+    priced = _attach_cost(dict(result), req.provider, req.model, req.messages)
     return ok({
         "provider": req.provider,
         "model": req.model,
         "text": text,
         "code": code,
         "execution": execution,
-        "usage": result.get("usage", {}),
-        "est_cost_usd": round(estimate_cost(req.provider, req.model, words_in, words_out), 5),
+        "usage": priced.get("usage", {}),
+        "est_cost_usd": priced["est_cost_usd"],
     })
 
 

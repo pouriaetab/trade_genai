@@ -69,6 +69,19 @@ def provider_ready(provider_id: str) -> bool:
     return bool(overlay.get_llm_secret(provider_id))
 
 
+def _normalize_usage(provider: str, usage: dict) -> dict:
+    """Provider token-usage shapes differ; normalize to {input_tokens, output_tokens}
+    so the UI can show real token counts (not just a word-count estimate)."""
+    if not usage:
+        return {"input_tokens": None, "output_tokens": None}
+    if provider == "anthropic":
+        return {"input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens")}
+    if provider == "gemini":
+        return {"input_tokens": usage.get("promptTokenCount"), "output_tokens": usage.get("candidatesTokenCount")}
+    # OpenAI-compatible (openai, groq, xai, openrouter, custom providers)
+    return {"input_tokens": usage.get("prompt_tokens"), "output_tokens": usage.get("completion_tokens")}
+
+
 def _err_message(resp) -> str:
     try:
         body = resp.json()
@@ -207,6 +220,7 @@ def chat(provider: str, model: str, messages: list[dict],
             )
         else:
             raise ProviderError(f"Unsupported provider: {provider}")
+    result["usage"] = _normalize_usage(provider, result.get("usage") or {})
     return {"provider": provider, "model": model, **result}
 
 
