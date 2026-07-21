@@ -22,7 +22,10 @@ code change.
 """
 from __future__ import annotations
 
+import json
 import os
+import shutil
+import subprocess
 
 import requests
 
@@ -79,11 +82,20 @@ def _api_key(provider_id: str) -> str:
     return key
 
 
+def _claude_code_available() -> bool:
+    return shutil.which("claude") is not None
+
+
 def provider_ready(provider_id: str) -> bool:
     _load_dotenv()
     p = PROVIDERS.get(provider_id)
     if p:
-        return bool(os.environ.get(p.env_var, "").strip() or overlay.get_llm_secret(provider_id))
+        has_key = bool(os.environ.get(p.env_var, "").strip() or overlay.get_llm_secret(provider_id))
+        if provider_id == "claude_code":
+            # Also needs the `claude` CLI itself on PATH — a token alone isn't
+            # enough, unlike every other provider here (which are plain HTTP).
+            return has_key and _claude_code_available()
+        return has_key
     return bool(overlay.get_llm_secret(provider_id))
 
 
@@ -92,7 +104,7 @@ def _normalize_usage(provider: str, usage: dict) -> dict:
     so the UI can show real token counts (not just a word-count estimate)."""
     if not usage:
         return {"input_tokens": None, "output_tokens": None}
-    if provider == "anthropic":
+    if provider in ("anthropic", "claude_code"):
         return {"input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens")}
     if provider == "gemini":
         return {"input_tokens": usage.get("promptTokenCount"), "output_tokens": usage.get("candidatesTokenCount")}
@@ -209,6 +221,90 @@ def _chat_gemini(model, messages, max_tokens, temperature):
     return {"text": text, "usage": data.get("usageMetadata", {})}
 
 
+# --- Claude via the local Claude Code CLI (Claude.ai subscription) --------
+#
+# Unlike every other provider above, this isn't an HTTP call: it shells out to
+# the `claude` binary in non-interactive mode, authenticated with
+# CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) instead of a Developer
+# Platform API key. Verified against the real CLI's `-p --output-format json`
+# schema: {"is_error": bool, "result": "<reply text>", "usage": {...},
+# "total_cost_usd": <equivalent API cost, not what you're actually billed
+# under a subscription>, "session_id": "..."}.
+#
+# Tradeoffs vs. every other provider here, worth knowing:
+#  - Each call starts the CLI fresh (a few seconds of overhead beyond
+#    whatever Claude itself takes) — there's no persistent connection to reuse.
+#  - Tools are explicitly disabled (--tools "") so this only ever answers in
+#    text/code, the same contract as every other provider — it never touches
+#    files or runs shell commands in your project on its own.
+#  - Treated as one-shot per call: the full conversation so far is flattened
+#    into a single prompt string rather than using the CLI's own
+#    --resume/session mechanism, matching how every other provider here is
+#    called (this app already reconstructs full context per turn).
+
+def _claude_code_env() -> dict:
+    return {**os.environ, "CLAUDE_CODE_OAUTH_TOKEN": _api_key("claude_code")}
+
+
+def _flatten_for_cli(messages: list[dict]) -> tuple[str, str]:
+    system = "\n".join(m["content"] for m in messages if m["role"] == "system").strip()
+    convo = [m for m in messages if m["role"] != "system"]
+    lines = [
+        ("User" if m["role"] == "user" else "Assistant") + ": " + m["content"]
+        for m in convo[:-1]
+    ]
+    transcript = "\n\n".join(lines)
+    last = convo[-1]["content"] if convo else ""
+    prompt = (transcript + "\n\n" if transcript else "") + last
+    return system, prompt
+
+
+def _chat_claude_code(model: str, messages: list[dict], max_tokens: int, temperature: float) -> dict:
+    if not _claude_code_available():
+        raise ProviderError(
+            "The `claude` CLI isn't installed or isn't on PATH. Install it with "
+            "`npm install -g @anthropic-ai/claude-code`, confirm it works with `claude --version`, "
+            "then try again."
+        )
+    env = _claude_code_env()  # raises ProviderError if CLAUDE_CODE_OAUTH_TOKEN is missing
+    system, prompt = _flatten_for_cli(messages)
+    if not system:
+        system = "You are a helpful quant research assistant. Answer directly; do not use tools."
+    cmd = [
+        "claude", "-p", prompt,
+        "--output-format", "json",
+        "--model", model,
+        "--tools", "",  # text/code answers only — never touches files or runs shell commands
+        "--system-prompt", system,
+        "--no-session-persistence",
+    ]
+    try:
+        result = subprocess.run(
+            cmd, input="", capture_output=True, text=True, timeout=DEFAULT_TIMEOUT, env=env,
+        )
+    except subprocess.TimeoutExpired:
+        raise ProviderError(
+            f"Claude Code didn't reply within {DEFAULT_TIMEOUT}s — try again or shorten the prompt."
+        )
+    except FileNotFoundError:
+        raise ProviderError("The `claude` CLI isn't installed or isn't on PATH.")
+
+    try:
+        data = json.loads(result.stdout)
+    except Exception:
+        detail = (result.stdout or result.stderr or "").strip()[:400]
+        raise ProviderError(f"Claude Code CLI returned unexpected output: {detail or '(empty)'}")
+
+    if data.get("is_error"):
+        raise ProviderError(f"Claude Code error: {data.get('result') or 'unknown error'}")
+
+    usage = data.get("usage") or {}
+    return {
+        "text": data.get("result", ""),
+        "usage": {"input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens")},
+    }
+
+
 def chat(provider: str, model: str, messages: list[dict],
          max_tokens: int = 4096, temperature: float = 0.7) -> dict:
     """Send a chat request. `messages` = [{"role","content"}]. Returns
@@ -220,6 +316,8 @@ def chat(provider: str, model: str, messages: list[dict],
         )
     elif provider == "anthropic":
         result = _chat_anthropic(model, messages, max_tokens, temperature)
+    elif provider == "claude_code":
+        result = _chat_claude_code(model, messages, max_tokens, temperature)
     elif provider == "gemini":
         result = _chat_gemini(model, messages, max_tokens, temperature)
     else:

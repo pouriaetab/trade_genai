@@ -35,7 +35,13 @@ ever shown masked.
 - `MASSIVE_API_KEY` — market data (required)
 - `GEMINI_API_KEY` / `GROQ_API_KEY` / `OPENROUTER_API_KEY` — free LLM tiers
 - `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `XAI_API_KEY` — paid LLM APIs
-- Note: a Claude.ai subscription is NOT an API key.
+- `CLAUDE_CODE_OAUTH_TOKEN` — Claude via a Claude.ai Pro/Max subscription
+  instead of a billed API key (from `claude setup-token`; requires the
+  `claude` CLI installed locally). Separate "Claude (via Claude Code,
+  subscription)" provider — see `genai_trader/llm/client.py`'s
+  `_chat_claude_code()`.
+- Note: a Claude.ai subscription is NOT an API key for the plain `anthropic`
+  provider — that one always needs `ANTHROPIC_API_KEY`.
 
 ## API Endpoints (all under /api/v1, standard envelope)
 - `GET  /api/v1/status` — Massive + provider readiness (masked)

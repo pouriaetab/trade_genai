@@ -155,6 +155,7 @@ or `paid` with a cost hint. Add a key in `.env.local` to enable a provider:
 | Anthropic Claude | paid | `ANTHROPIC_API_KEY` | needs an API key from the Developer Platform — a Claude.ai (Pro/Max) subscription does not grant API access |
 | OpenAI | paid | `OPENAI_API_KEY` | GPT-5 family |
 | xAI Grok | paid | `XAI_API_KEY` | large-context flagship |
+| Claude (via Claude Code) | subscription | `CLAUDE_CODE_OAUTH_TOKEN` | uses a Claude.ai Pro/Max subscription's included usage instead of a billed API key — see below |
 
 Get a free Gemini key at [ai.google.dev](https://ai.google.dev) to start with no
 cost. Curated prices live in `genai_trader/llm/registry.py` — verify on each
@@ -162,6 +163,25 @@ provider's page, as they change. Every key above can also be entered from the
 Settings tab instead of `.env.local` (env still wins if both are set), and any
 provider/model can be added or removed there too. The header's "using: …"
 pill always shows whichever provider/model is currently selected.
+
+### Already have a Claude.ai subscription (no separate API key)?
+
+The "Anthropic Claude" row above needs a funded Developer Platform key — a
+Claude.ai Pro/Max subscription alone won't work there. If you'd rather use
+that subscription's included usage instead of paying per token, there's a
+second, separate Claude option: **"Claude (via Claude Code, subscription)"**.
+
+1. Install the Claude Code CLI: `npm install -g @anthropic-ai/claude-code`
+2. Run `claude setup-token` — this links it to your Claude.ai login and prints
+   a long-lived token
+3. Put it in `.env.local`: `CLAUDE_CODE_OAUTH_TOKEN="<the token>"`
+
+That's it — it shows up as its own provider in the picker. Worth knowing how
+it's different from every other provider here: each request starts the
+`claude` CLI fresh (a few seconds of startup overhead beyond whatever Claude
+itself takes), it never uses tools (answers in text/code only, same contract
+as the API-based providers), and there's no per-token dollar cost shown since
+usage comes out of your subscription, not a metered API bill.
 
 ## Keys stay private
 

@@ -3,12 +3,17 @@
 Prices are USD per 1,000,000 tokens (input / output), current as of July 2026.
 They change often; treat them as estimates and confirm on each provider's
 pricing page. `tier` reflects how you'd realistically call the model:
-  - "free"  : usable on the provider's free API tier (rate-limited)
-  - "paid"  : requires a funded API key, billed per token
+  - "free"         : usable on the provider's free API tier (rate-limited)
+  - "paid"         : requires a funded API key, billed per token
+  - "subscription" : uses your Claude.ai Pro/Max plan's included usage via the
+                     local Claude Code CLI, not a billed API key (see "claude_code")
 
-IMPORTANT: a Claude.ai (Pro/Max) *subscription* does NOT grant API access.
-API usage is billed separately via the Claude Developer Platform, so Anthropic
-models are marked "paid" and need ANTHROPIC_API_KEY.
+IMPORTANT: a Claude.ai (Pro/Max) *subscription* does NOT grant API access to
+the Anthropic Claude provider below. That provider's usage is billed
+separately via the Claude Developer Platform, so its models are marked "paid"
+and need ANTHROPIC_API_KEY. If you only have a Claude.ai subscription (no
+funded API key), use the separate "claude_code" provider instead — it talks
+to your subscription's included usage through the `claude` CLI.
 
 Note: "Groq" (fast inference for open models, free tier) is a different company
 from "Grok" (xAI's model, paid). Both are included.
@@ -131,6 +136,26 @@ PROVIDERS: dict[str, Provider] = {
                   1_000_000, "Flagship; 1M-token context."),
         ],
     ),
+    # Different from "anthropic" above: this one uses your Claude.ai (Pro/Max)
+    # subscription's included usage via the Claude Code CLI running locally on
+    # your machine — a `claude` binary and a token from `claude setup-token`,
+    # not a per-token-billed Developer Platform API key. See client.py's
+    # _chat_claude_code() for how the request actually gets made (a subprocess,
+    # not an HTTP call) and genai_trader/llm/client.py's module docstring area
+    # for the caveats (CLI startup overhead, no tool use, one-shot per call).
+    "claude_code": Provider(
+        id="claude_code", label="Claude (via Claude Code, subscription)",
+        env_var="CLAUDE_CODE_OAUTH_TOKEN",
+        has_free_tier=False,
+        docs_url="https://docs.claude.com/en/docs/claude-code/overview",
+        models=[
+            Model("sonnet", "Claude Sonnet (latest)", "subscription", 0.0, 0.0,
+                  200_000, "Included in your Claude.ai subscription — no per-token API cost. "
+                  "Runs via the local `claude` CLI, not the Anthropic API."),
+            Model("opus", "Claude Opus (latest)", "subscription", 0.0, 0.0,
+                  200_000, "Deepest reasoning; still included in your subscription."),
+        ],
+    ),
 }
 
 
@@ -236,6 +261,8 @@ def cost_from_tokens(provider_id: str, model_id: str,
 
 def _cost_hint(m: Model) -> str:
     """Plain-English cost for a typical ~500-in / ~500-out word exchange."""
+    if m.tier == "subscription":
+        return "included in your Claude.ai subscription"
     if m.tier == "free" and m.input_price == 0 and m.output_price == 0:
         return "free"
     cost = (words_to_tokens(500) / 1e6 * m.input_price
