@@ -22,6 +22,11 @@ Endpoints (all under /api/v1, all return the standard envelope):
     POST /api/v1/rd/ef/run           Efficient Frontier: whole pipeline at once
     GET  /api/v1/rd/state/{id}       load a strategy's sticky UI state (inputs/results)
     PUT  /api/v1/rd/state/{id}       save a strategy's sticky UI state
+    GET  /api/v1/rd/lab-notes        Notebook/Lab tabs + pinned cells matching a strategy name
+    GET    /api/v1/rd/strategies            list user-added custom strategies
+    POST   /api/v1/rd/strategies             add one (seeded from a matching Lab tab if code omitted)
+    PUT    /api/v1/rd/strategies/{id}        edit a custom strategy's code/summary
+    DELETE /api/v1/rd/strategies/{id}        remove a custom strategy
 
     Settings — add/remove providers from the app, no code or .env edits needed:
     GET    /api/v1/settings/data-providers            list market-data providers
@@ -136,6 +141,7 @@ class EFFrontierReq(BaseModel):
     risk_free_rate: float = 0.0
     risk_free_label: str = "Risk-Free"
     n_portfolios: int = 10_000
+    exclude: list[str] = []
 
 
 class EFRunReq(BaseModel):
@@ -146,10 +152,21 @@ class EFRunReq(BaseModel):
     risk_free_rate: float = 0.0
     risk_free_label: str = "Risk-Free"
     n_portfolios: int = 10_000
+    exclude: list[str] = []
 
 
 class RDStateReq(BaseModel):
     state: dict = {}
+
+
+class LabNotesQuery(BaseModel):
+    name: str
+
+
+class RDStrategyReq(BaseModel):
+    name: str
+    summary: str = ""
+    code: str = ""
 
 
 class DataProviderReq(BaseModel):
@@ -437,6 +454,19 @@ def ef_risk_free(req: EFRiskFreeReq):
         return err(f"Fetch failed: {exc}", status=502)
 
 
+def _apply_exclude(annual_returns: pd.Series, cov: pd.DataFrame, exclude: list[str]):
+    """Drop manually-excluded symbols from the return vector and covariance
+    matrix right before simulation — lets the user rule out a stock from the
+    result without re-fetching or re-transforming anything upstream."""
+    if not exclude:
+        return annual_returns, cov
+    drop = {s.strip().upper() for s in exclude if s and s.strip()}
+    keep = [s for s in annual_returns.index if s.upper() not in drop]
+    if not keep:
+        raise ValueError("Excluding all symbols leaves nothing to simulate — keep at least one.")
+    return annual_returns.reindex(keep), cov.reindex(index=keep, columns=keep)
+
+
 def _simulate(annual_returns: pd.Series, cov: pd.DataFrame, risk_free_rate: float,
              risk_free_label: str, n_portfolios: int) -> dict:
     """Branches on symbol count: 2+ risky assets get the normal random-portfolio
@@ -459,6 +489,7 @@ def ef_frontier(req: EFFrontierReq):
     try:
         mu = pd.Series(req.annual_returns)
         cov = _wide_from_table(req.cov_matrix, index_is_date=False)
+        mu, cov = _apply_exclude(mu, cov, req.exclude)
         result = _simulate(mu, cov, req.risk_free_rate, req.risk_free_label, req.n_portfolios)
         return ok(result)
     except ValueError as exc:
@@ -487,7 +518,8 @@ def ef_run(req: EFRunReq):
         if returns.empty:
             return err("Not enough overlapping data to compute returns.", status=400)
         annual_returns, cov = strat.annualize(returns)
-        sim = _simulate(annual_returns, cov, req.risk_free_rate, req.risk_free_label, req.n_portfolios)
+        sim_returns, sim_cov = _apply_exclude(annual_returns, cov, req.exclude)
+        sim = _simulate(sim_returns, sim_cov, req.risk_free_rate, req.risk_free_label, req.n_portfolios)
         preview = long_df.copy()
         preview["date"] = preview["date"].dt.strftime("%Y-%m-%d")
         return ok({
@@ -515,6 +547,70 @@ def get_rd_state_ep(strategy_id: str):
 @app.put("/api/v1/rd/state/{strategy_id}")
 def put_rd_state_ep(strategy_id: str, req: RDStateReq):
     return ok(memory.save_rd_state(strategy_id, req.state), message="Saved")
+
+
+# --- Lab <-> R&D bridge -----------------------------------------------------
+
+@app.get("/api/v1/rd/lab-notes")
+def rd_lab_notes(name: str):
+    """Notebook/Lab tabs whose name loosely matches a strategy name, with their
+    pinned (or most recent) cells — a read-only reference so R&D work can build
+    on what was already tried and liked in the Lab."""
+    return ok({"matches": memory.find_lab_notes(name)})
+
+
+# --- R&D custom strategies: user-added editable-code strategies ------------
+
+def _rd_strategy_id(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_")
+    return slug or "strategy"
+
+
+@app.get("/api/v1/rd/strategies")
+def rd_strategies_list():
+    return ok(memory.list_custom_strategies())
+
+
+@app.post("/api/v1/rd/strategies")
+def rd_strategies_create(req: RDStrategyReq):
+    if not req.name.strip():
+        return err("Strategy name is required.", status=400)
+    strategy_id = _rd_strategy_id(req.name)
+    if memory.get_custom_strategy(strategy_id):
+        return err("A custom strategy with this name already exists.", status=409)
+    lab_matches = memory.find_lab_notes(req.name)
+    code = req.code
+    if not code and lab_matches:
+        # Seed from the first matching Lab tab's most recent code cell, if the
+        # user didn't already paste something in themselves.
+        for cell in reversed(lab_matches[0]["cells"]):
+            if cell.get("code"):
+                code = cell["code"]
+                break
+    strategy = {
+        "id": strategy_id, "name": req.name.strip(),
+        "summary": req.summary.strip(), "code": code,
+    }
+    memory.save_custom_strategy(strategy_id, strategy)
+    return ok(strategy, message="Strategy created")
+
+
+@app.put("/api/v1/rd/strategies/{strategy_id}")
+def rd_strategies_update(strategy_id: str, req: RDStrategyReq):
+    if not memory.get_custom_strategy(strategy_id):
+        return err("Strategy not found.", status=404)
+    strategy = {
+        "id": strategy_id, "name": req.name.strip(),
+        "summary": req.summary.strip(), "code": req.code,
+    }
+    memory.save_custom_strategy(strategy_id, strategy)
+    return ok(strategy, message="Saved")
+
+
+@app.delete("/api/v1/rd/strategies/{strategy_id}")
+def rd_strategies_delete(strategy_id: str):
+    memory.delete_custom_strategy(strategy_id)
+    return ok(message="Deleted")
 
 
 # --- Settings: data providers + LLM providers/models, editable from the app -

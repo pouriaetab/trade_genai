@@ -5,8 +5,39 @@ import Table, { RecordsTable } from "./Table.jsx";
 import FrontierChart from "./FrontierChart.jsx";
 import StepCard from "./StepCard.jsx";
 import RiskFreePicker from "./RiskFreePicker.jsx";
+import LabNotesPanel from "./LabNotesPanel.jsx";
 
 const STRATEGY_ID = "efficient_frontier";
+const STRATEGY_NAME = "Efficient Frontier";
+
+function ResultBlock({ title, point, symbols, highlight }) {
+  if (!point) return null;
+  return (
+    <div className={"ef-result-block" + (highlight ? " highlight" : "")}>
+      <p className="ef-result-title">{title}</p>
+      <div className="ef-result-metrics">
+        <div className="ef-metric">
+          <span className="ef-metric-label">Expected return</span>
+          <span className="ef-metric-value">{(point.return * 100).toFixed(2)}%</span>
+        </div>
+        <div className="ef-metric">
+          <span className="ef-metric-label">Risk (volatility)</span>
+          <span className="ef-metric-value">{(point.volatility * 100).toFixed(2)}%</span>
+        </div>
+        <div className="ef-metric">
+          <span className="ef-metric-label">Sharpe ratio</span>
+          <span className="ef-metric-value">{point.sharpe != null ? point.sharpe.toFixed(2) : "—"}</span>
+        </div>
+      </div>
+      <p className="hint">Allocation</p>
+      <table className="rd-table"><thead><tr>
+        {symbols.map((s) => <th key={s}>{s}</th>)}
+      </tr></thead><tbody><tr>
+        {symbols.map((s) => <td key={s}>{((point.weights[s] || 0) * 100).toFixed(1)}%</td>)}
+      </tr></tbody></table>
+    </div>
+  );
+}
 
 function todayISO() { return new Date().toISOString().slice(0, 10); }
 function yearAgoISO() {
@@ -29,6 +60,7 @@ const DEFAULTS = {
   riskFreeCustomRate: 2,
   riskFreeResolvedRate: null,
   nPortfolios: 10000,
+  excludedSymbols: [],
   fetchResult: null,
   returnsResult: null,
   statsResult: null,
@@ -72,6 +104,16 @@ export default function EfficientFrontier() {
 
   const symbols = () => state.symbolsText.split(",").map((s) => s.trim()).filter(Boolean);
   const symCount = symbols().length;
+  const excludedSet = () => new Set((state.excludedSymbols || []).map((s) => s.toUpperCase()));
+  const activeSymbols = () => symbols().filter((s) => !excludedSet().has(s.toUpperCase()));
+  function toggleExclude(sym) {
+    const up = sym.toUpperCase();
+    setState((s) => {
+      const cur = new Set((s.excludedSymbols || []).map((x) => x.toUpperCase()));
+      if (cur.has(up)) cur.delete(up); else cur.add(up);
+      return { ...s, excludedSymbols: [...cur] };
+    });
+  }
 
   function resolvedRiskFreeRate() {
     if (state.riskFreeChoice === "custom") return Number(state.riskFreeCustomRate) / 100 || 0;
@@ -141,6 +183,7 @@ export default function EfficientFrontier() {
         risk_free_rate: resolvedRiskFreeRate(),
         risk_free_label: riskFreeLabel(),
         n_portfolios: Number(state.nPortfolios),
+        exclude: [...excludedSet()],
       }));
     if (data) { patch({ frontierResult: data }); setCollapsed(5, false); }
   }
@@ -151,6 +194,7 @@ export default function EfficientFrontier() {
         symbols: symbols(), start: state.start, end: state.end, kind: state.returnKind,
         risk_free_rate: resolvedRiskFreeRate(), risk_free_label: riskFreeLabel(),
         n_portfolios: Number(state.nPortfolios),
+        exclude: [...excludedSet()],
       }));
     if (data) {
       patch({
@@ -174,6 +218,7 @@ export default function EfficientFrontier() {
 
   return (
     <div className="ef-strategy">
+      <LabNotesPanel strategyName={STRATEGY_NAME} />
       <StepCard index={1} title="Symbols & date range" done={!!state.fetchResult}
         collapsed={state.collapsed[1]} onToggle={() => setCollapsed(1, !state.collapsed[1])}
         summary={summary1}>
@@ -200,6 +245,18 @@ export default function EfficientFrontier() {
         {busy === "fetch" && (
           <p className="hint">Fetching {symCount || 1} symbol{symCount === 1 ? "" : "s"} from the market
             data API — usually ~1–3s per symbol, so roughly {Math.max(symCount, 1) * 1}–{Math.max(symCount, 1) * 3}s total.</p>
+        )}
+        {symCount > 1 && (
+          <div className="ef-exclude-row" title="Untick a symbol to leave it out of the simulation and results — without re-fetching or re-typing anything.">
+            <span className="hint">Include in simulation:</span>
+            {symbols().map((s) => (
+              <label key={s} className="ef-exclude-chip">
+                <input type="checkbox" checked={!excludedSet().has(s.toUpperCase())}
+                  onChange={() => toggleExclude(s)} />
+                {s.toUpperCase()}
+              </label>
+            ))}
+          </div>
         )}
       </StepCard>
 
@@ -293,32 +350,21 @@ export default function EfficientFrontier() {
               <FrontierChart frontier={state.frontierResult}
                 minLabel={symbols().length === 1 ? "all risk-free" : "min-vol"}
                 maxLabel={symbols().length === 1 ? "50/50 point" : "max-Sharpe"} />
-              <div className="ef-stats-grid">
-                <div>
-                  <p className="hint">{symbols().length === 1 ? "all risk-free weights" : "min-volatility weights"}</p>
-                  <table className="rd-table"><thead><tr>
-                    {state.frontierResult.symbols.map((s) => <th key={s}>{s}</th>)}
-                  </tr></thead><tbody><tr>
-                    {state.frontierResult.symbols.map((s) =>
-                      <td key={s}>{((state.frontierResult.min_volatility.weights[s] || 0) * 100).toFixed(1)}%</td>)}
-                  </tr></tbody></table>
-                </div>
-                <div>
-                  <p className="hint">{symbols().length === 1 ? "50/50 point weights" : "best-Sharpe weights (portfolio allocation)"}</p>
-                  <table className="rd-table"><thead><tr>
-                    {state.frontierResult.symbols.map((s) => <th key={s}>{s}</th>)}
-                  </tr></thead><tbody><tr>
-                    {state.frontierResult.symbols.map((s) =>
-                      <td key={s}>{((state.frontierResult.max_sharpe.weights[s] || 0) * 100).toFixed(1)}%</td>)}
-                  </tr></tbody></table>
-                </div>
+              <div className="ef-results-grid">
+                <ResultBlock
+                  title={symbols().length === 1 ? "All risk-free" : "Min-volatility portfolio"}
+                  point={state.frontierResult.min_volatility}
+                  symbols={state.frontierResult.symbols}
+                />
+                <ResultBlock
+                  title={symbols().length === 1 ? "50/50 point" : "Max-Sharpe portfolio"}
+                  point={state.frontierResult.max_sharpe}
+                  symbols={state.frontierResult.symbols}
+                  highlight
+                />
               </div>
               <p className="hint">
-                Weights are long-only (0–100% each, sum to 100%) — the random-portfolio method,
-                so no shorting. Return {(state.frontierResult.max_sharpe.return * 100).toFixed(2)}%,
-                volatility {(state.frontierResult.max_sharpe.volatility * 100).toFixed(2)}%
-                {state.frontierResult.max_sharpe.sharpe != null &&
-                  `, Sharpe ${state.frontierResult.max_sharpe.sharpe.toFixed(2)}`} for the highlighted portfolio above.
+                Weights are long-only (0–100% each, sum to 100%) — the random-portfolio method, so no shorting.
               </p>
             </>
           )}
