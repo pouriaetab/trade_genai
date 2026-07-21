@@ -72,11 +72,33 @@ export default function App() {
   // backend must never fall through to creating (and then autosaving) a blank
   // session over the top of real saved data. `loaded` (which arms autosave)
   // is only set on confirmed success.
+  //
+  // The most common failure is just a race: the page loads a beat before the
+  // backend finishes starting up (it can take several seconds, longer on the
+  // very first run). So this retries with backoff before giving up and
+  // showing the "couldn't reach backend" banner — most of the time that means
+  // the banner never has to appear at all.
   useEffect(() => {
-    api("/api/v1/models").then((r) => setModels(r.data || [])).catch(() => setModels([]));
-    api("/api/v1/workspace")
-      .then((r) => {
-        if (!r || r.success !== true) { setLoadError(true); return; }
+    let cancelled = false;
+    const RETRY_DELAYS_MS = [800, 1500, 2500, 4000, 6000]; // ~15s total
+
+    async function loadModels(attempt = 0) {
+      let r;
+      try { r = await api("/api/v1/models"); } catch { r = null; }
+      if (cancelled) return;
+      if (r?.success && (r.data || []).length) { setModels(r.data); return; }
+      if (attempt < RETRY_DELAYS_MS.length) {
+        setTimeout(() => { if (!cancelled) loadModels(attempt + 1); }, RETRY_DELAYS_MS[attempt]);
+      } else if (r?.success) {
+        setModels(r.data || []); // succeeded but genuinely empty — stop retrying
+      }
+    }
+
+    async function loadWorkspace(attempt = 0) {
+      let r;
+      try { r = await api("/api/v1/workspace"); } catch { r = null; }
+      if (cancelled) return;
+      if (r && r.success === true) {
         const w = r.data || {};
         let ss = Array.isArray(w.sessions) ? w.sessions : [];
         if (!ss.length) ss = [newSession("Notebook 1")];
@@ -84,8 +106,19 @@ export default function App() {
         const firstVisible = ss.find((s) => !s.archived) || ss[0];
         setActiveId(ss.find((s) => s.id === w.activeId && !s.archived) ? w.activeId : firstVisible.id);
         setLoaded(true);
-      })
-      .catch(() => setLoadError(true));
+        setLoadError(false);
+        return;
+      }
+      if (attempt < RETRY_DELAYS_MS.length) {
+        setTimeout(() => { if (!cancelled) loadWorkspace(attempt + 1); }, RETRY_DELAYS_MS[attempt]);
+      } else {
+        setLoadError(true);
+      }
+    }
+
+    loadModels();
+    loadWorkspace();
+    return () => { cancelled = true; };
   }, []);
 
   // Debounced autosave of the whole workspace after any change. Gated on
@@ -188,10 +221,11 @@ export default function App() {
           <div className="panel" style={{ borderColor: "var(--color-error)" }}>
             <div className="panel-body">
               <p className="placeholder">
-                Couldn't load your saved tabs from the backend — nothing has been
-                changed or lost, this is just a failed connection. Make sure the
-                backend is running (<code>./run.sh</code>, or check <code>:8003</code>),
-                then <button className="ghost" onClick={() => window.location.reload()}>reload</button>.
+                Still can't reach the backend after retrying for about 15 seconds — nothing
+                has been changed or lost, this is just a failed connection, not data loss.
+                Check that <code>./run.sh</code> is running and that nothing else is using
+                port <code>:8003</code>, then{" "}
+                <button className="ghost" onClick={() => window.location.reload()}>reload</button>.
               </p>
             </div>
           </div>
