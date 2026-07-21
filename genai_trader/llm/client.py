@@ -241,6 +241,24 @@ def _chat_gemini(model, messages, max_tokens, temperature):
 #    into a single prompt string rather than using the CLI's own
 #    --resume/session mechanism, matching how every other provider here is
 #    called (this app already reconstructs full context per turn).
+#
+# CLAUDE_CLI_CWD matters more than you'd expect: running `claude -p` from this
+# project's own directory makes the CLI auto-discover CLAUDE.md, git status,
+# and project settings before it ever gets to your prompt — measured ~11s of
+# pure startup overhead that way vs. ~3.5s from a neutral empty directory (see
+# CLAUDE_CLI_TIMEOUT below). Since this call only ever wants a plain text/code
+# answer (no project context, no tools), running from a neutral scratch
+# directory with --setting-sources "" avoids paying that discovery cost on
+# every single message.
+CLAUDE_CLI_TIMEOUT = 240  # CLI startup + generation can run longer than a plain HTTP call
+
+
+def _claude_cli_cwd() -> str:
+    import tempfile
+    path = os.path.join(tempfile.gettempdir(), "trade_genai_claude_cli_cwd")
+    os.makedirs(path, exist_ok=True)
+    return path
+
 
 def _claude_code_env() -> dict:
     return {**os.environ, "CLAUDE_CODE_OAUTH_TOKEN": _api_key("claude_code")}
@@ -277,14 +295,19 @@ def _chat_claude_code(model: str, messages: list[dict], max_tokens: int, tempera
         "--tools", "",  # text/code answers only — never touches files or runs shell commands
         "--system-prompt", system,
         "--no-session-persistence",
+        "--setting-sources", "",  # skip loading user/project/local settings — see note above
     ]
     try:
         result = subprocess.run(
-            cmd, input="", capture_output=True, text=True, timeout=DEFAULT_TIMEOUT, env=env,
+            cmd, input="", capture_output=True, text=True, timeout=CLAUDE_CLI_TIMEOUT,
+            env=env, cwd=_claude_cli_cwd(),
         )
     except subprocess.TimeoutExpired:
         raise ProviderError(
-            f"Claude Code didn't reply within {DEFAULT_TIMEOUT}s — try again or shorten the prompt."
+            f"Claude Code didn't reply within {CLAUDE_CLI_TIMEOUT}s. This is usually a long "
+            "conversation history making for a long prompt, or a slower model (Opus) under load "
+            "— try again, start a fresh Notebook tab to shorten the context, or switch to the "
+            "Sonnet alias, which is faster."
         )
     except FileNotFoundError:
         raise ProviderError("The `claude` CLI isn't installed or isn't on PATH.")
