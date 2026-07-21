@@ -47,6 +47,11 @@ it's a self-contained research tool.
 - **Keep your thinking.** Each Lab tab keeps its own memory — notes, cells, and
   chat context persist across restarts. Tabs can be archived (hidden but kept)
   or deleted outright, so you can clear clutter without losing work.
+- **Doesn't get stuck on a missing package.** scipy, statsmodels, scikit-learn,
+  and seaborn are preinstalled for factor models, regressions, and stats work.
+  If generated code reaches for something else, the kernel installs it
+  automatically the first time and re-runs your code — you'll see a one-line
+  note in the output when that happens, instead of a `ModuleNotFoundError`.
 
 ## Who it's for
 

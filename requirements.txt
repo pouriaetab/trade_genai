@@ -5,6 +5,16 @@ requests>=2.31
 python-dotenv>=1.0
 matplotlib>=3.7
 
+# Common quant / stats libraries — preinstalled so generated code that reaches
+# for these (regressions, factor models, clustering, plotting) works out of
+# the box instead of failing with ModuleNotFoundError. The kernel also
+# auto-installs anything else missing on first use (see backend/app/kernel.py),
+# but keeping the frequently-needed ones here means no install delay for them.
+scipy>=1.11
+statsmodels>=0.14
+scikit-learn>=1.3
+seaborn>=0.13
+
 # Chat->run webapp
 fastapi>=0.110
 uvicorn[standard]>=0.29

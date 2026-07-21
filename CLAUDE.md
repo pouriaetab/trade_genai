@@ -53,3 +53,8 @@ pytest                                             # once tests are added under 
 ## Notes
 - The code kernel runs arbitrary Python with no sandbox — local, single-user only.
 - Response format: `{ success, data, message, timestamp }`.
+- The kernel (`backend/app/kernel.py`) auto-installs a missing package on
+  `ModuleNotFoundError` (via `pip install` into the running interpreter's env)
+  and retries the cell once, up to 4 distinct packages per run. scipy,
+  statsmodels, scikit-learn, and seaborn are preinstalled via
+  `requirements.txt` so common quant/stats code doesn't hit an install delay.
