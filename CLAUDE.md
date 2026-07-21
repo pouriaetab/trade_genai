@@ -1,12 +1,12 @@
 # trade_genai
 
 ## Overview
-A hands-on lab for the Wiley book *Generative AI for Trading and Asset Management*
-(Medina Ruiz & Chan). It pairs a reusable Python library (`genai_trader`) with a
-web app: run book code in a persistent kernel, pull market data from the Massive
-(formerly Polygon) API, and chat with free or paid LLMs while you learn — with
-per-project memory. Built to control_deck conventions so it can fold into that
-deck later.
+A local, plug-and-play webapp for AI-assisted quant research. It pairs a
+reusable Python library (`genai_trader`) with a web app: run Python in a
+persistent kernel, pull market data from a REST API (Massive by default —
+any similarly-shaped provider, e.g. Alpaca, works too), and chat with free or
+paid LLMs — with per-project memory. Built to control_deck conventions so it
+can fold into that deck later.
 
 ## Tech Stack
 - Backend: FastAPI + Uvicorn, Pydantic v2 (Python 3.10+)

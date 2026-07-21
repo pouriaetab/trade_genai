@@ -43,8 +43,9 @@ export default function DataProviders() {
         Market-data providers. <code>MASSIVE_API_KEY</code> in <code>.env.local</code> is
         auto-detected as the built-in "Massive" provider — the technical path. Non-technical?
         Add a provider right here instead; its key stays server-side and only ever shows masked.
-        Any Polygon-compatible REST API works out of the box (same aggs/dividends endpoint shape);
-        a different response shape needs a small adapter in <code>genai_trader/data/massive.py</code>.
+        Any REST API shaped like Massive's works out of the box (same aggs/dividends endpoint
+        shape) — Alpaca and several others follow this convention too; a genuinely different
+        response shape needs a small adapter in <code>genai_trader/data/massive.py</code>.
       </p>
 
       <table className="rd-table settings-table">
@@ -76,12 +77,12 @@ export default function DataProviders() {
         <label className="ef-field ef-field-wide">
           <span>Provider name</span>
           <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
-            placeholder="e.g. Polygon.io" required />
+            placeholder="e.g. Alpaca" required />
         </label>
         <label className="ef-field ef-field-wide">
           <span>REST base URL</span>
           <input value={form.rest_url} onChange={(e) => setForm({ ...form, rest_url: e.target.value })}
-            placeholder="https://api.polygon.io" required />
+            placeholder="https://api.alpaca.markets" required />
         </label>
         <label className="ef-field ef-field-wide">
           <span>API key</span>

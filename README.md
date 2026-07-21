@@ -34,11 +34,16 @@ it's a self-contained research tool.
   OpenRouter) and paid APIs (Anthropic, OpenAI, xAI), each labelled with a cost
   estimate, so you can weigh answers and price together. The header always shows
   which model is currently selected.
-- **Build out strategies in R&D.** Efficient Frontier ships as the first
-  example: pick symbols and a date range, fetch prices, transform them into daily
-  returns, compute annualized stats, then solve and plot the mean-variance
-  frontier — one step at a time or all at once. More strategies are meant to be
-  added the same way (see `genai_trader/strategies/`).
+- **Build out strategies in R&D.** Efficient Frontier ships complete as the
+  reference strategy: pick symbols (or exclude any after the fact) and a date
+  range, fetch prices, transform them into daily returns, compute annualized
+  stats, choose a real data-backed risk-free rate (BIL, SHY, or your own),
+  then run a long-only Monte Carlo simulation and see expected return,
+  volatility, Sharpe ratio, and allocation % for the best portfolios found —
+  one step at a time or all at once. It's meant to double as the pattern for
+  every strategy after it (see `genai_trader/strategies/` and
+  `frontend/src/components/RD/EfficientFrontier.jsx`), and you can also add a
+  new strategy directly from the R&D tab's UI, no code required.
 - **Bring your own data and models — no code required.** A Settings tab lets
   you add, disable, or remove market-data providers and LLM providers/models
   from the app itself: paste a name, URL, and key, and it's available in the
@@ -118,11 +123,11 @@ Open http://127.0.0.1:5177.
   its cells, and the "Archived" list to restore or permanently delete it.
 - **Add, swap, or remove a market-data provider — from the Settings tab.**
   Give it a name, its REST base URL, and an API key; it's available
-  immediately, no restart. Works out of the box for any Polygon-compatible API
-  (same aggs/dividends response shape as Massive). Point-and-click for
-  non-technical users; `.env.local` (`MASSIVE_API_KEY`, `MASSIVE_REST_URL`)
-  still works for anyone who prefers config files, and is auto-detected as the
-  built-in "Massive" provider.
+  immediately, no restart. Massive is the built-in default (via
+  `MASSIVE_API_KEY` / `MASSIVE_REST_URL` in `.env.local`, auto-detected, no
+  UI needed), but it's just the default, not a requirement — any provider
+  with the same aggs/dividends REST shape works out of the box (Alpaca is
+  another example), added point-and-click for non-technical users.
 - **Add, swap, or remove LLM providers and models — also from Settings.** The
   picker ships with curated recent models from Gemini, Groq, OpenRouter,
   Anthropic, OpenAI, and xAI; remove any of them you don't want. Add a custom
@@ -136,11 +141,11 @@ Open http://127.0.0.1:5177.
   a matching React component under `frontend/src/components/RD/`, registered in
   `frontend/src/components/RD/index.jsx`. `efficient_frontier.py` is a template
   to copy from.
-- **A different data response shape.** The Settings tab handles *any*
-  Polygon-compatible REST API without touching code. A genuinely different
-  shape needs a small parser added to `genai_trader/data/massive.py` — that's
-  the one place that turns a provider's raw JSON into the OHLCV table the rest
-  of the app expects.
+- **A different data response shape.** The Settings tab handles *any* REST
+  API shaped like Massive's without touching code. A provider with a
+  genuinely different shape needs a small parser added to
+  `genai_trader/data/massive.py` — that's the one place that turns a
+  provider's raw JSON into the OHLCV table the rest of the app expects.
 
 ## Models: free and paid
 

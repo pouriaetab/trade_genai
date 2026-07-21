@@ -11,12 +11,13 @@ Two ways to configure a market-data provider, both first-class:
      git-ignored `data/secrets.json`, which — like `.env.local` — is never
      committed, printed, or returned in plaintext (only masked).
 
-Only "Polygon-compatible" REST APIs (same aggs/dividends endpoint shape as
-Massive/Polygon.io) are understood out of the box — that's what
-`genai_trader/data/massive.py` parses. Pointing this at a different
-Polygon-compatible provider is just a name + URL + key. A genuinely different
-response shape needs a small adapter in that module (a job for a developer,
-by design — see the README).
+Only REST APIs shaped like Massive's (the same aggs/dividends endpoint shape,
+a common convention several market-data providers share) are understood out
+of the box — that's what `genai_trader/data/massive.py` parses. Pointing this
+at a different provider using that same shape (Massive is the default here,
+but this covers others too) is just a name + URL + key. A provider with a
+genuinely different response shape needs a small adapter in that module (a
+job for a developer, by design — see the README).
 
 Nothing here ever prints, logs, or repr()s a real key — only a masked form
 (`abcd…wxyz`).
