@@ -8,7 +8,7 @@ import RD from "./components/RD/index.jsx";
 import Settings from "./components/Settings/index.jsx";
 
 const uid = () => (globalThis.crypto?.randomUUID?.() || `s${Date.now()}${Math.random()}`);
-const newSession = (name) => ({ id: uid(), name, cells: [], notes: "", archived: false });
+const newSession = (name) => ({ id: uid(), name, cells: [], notes: "", archived: false, done: false });
 
 // The two top-level pages. Ids are fixed (used for routing/state), but the
 // labels are just a starting point — double-click either tab to rename it to
@@ -33,7 +33,7 @@ function readPageLabels() {
 // Keep storage light: drop base64 figures / big HTML from saved cells.
 function stripSessions(sessions) {
   return sessions.map((s) => ({
-    id: s.id, name: s.name, notes: s.notes, archived: !!s.archived,
+    id: s.id, name: s.name, notes: s.notes, archived: !!s.archived, done: !!s.done,
     cells: (s.cells || []).map((c) => ({
       id: c.id, kind: c.kind, input: c.input, answer: c.answer,
       code: c.code, meta: c.meta, execSummary: c.execSummary, pinned: !!c.pinned,
@@ -174,6 +174,9 @@ export default function App() {
     setSessions((ss) => ss.map((s) => (s.id === id ? { ...s, archived: false } : s)));
     setActiveId(id);
   }
+  function toggleDoneSession(id) {
+    setSessions((ss) => ss.map((s) => (s.id === id ? { ...s, done: !s.done } : s)));
+  }
   function renamePage(id, label) {
     setPageLabels((cur) => ({ ...cur, [id]: label }));
   }
@@ -238,7 +241,7 @@ export default function App() {
             sessions={sessions} activeId={active.id}
             onSwitch={setActiveId} onAdd={addSession}
             onRename={renameSession} onDelete={deleteSession}
-            onArchive={archiveSession} onRestore={restoreSession}
+            onArchive={archiveSession} onRestore={restoreSession} onToggleDone={toggleDoneSession}
           />
           <main>
             <div className="learn">

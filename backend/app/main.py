@@ -78,7 +78,18 @@ app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )
 
+# The kernel imports matplotlib, which builds a font cache the very first time
+# it runs in a fresh environment (or after the cache dir is cleared) — a
+# one-time delay of several seconds to ~1 minute, not something that scales
+# with how many Notebook/Lab tabs exist or how much is saved. It happens here,
+# before the server starts accepting requests, so it's absorbed into startup
+# rather than surprising you on your first chart. Every run after the first on
+# the same machine should be fast.
+print("Starting kernel (first run on a machine may take up to a minute while "
+      "matplotlib builds its font cache — this is one-time, unrelated to how "
+      "many tabs or cells you have saved)...", flush=True)
 kernel = KernelSession()
+print("Kernel ready.", flush=True)
 FRONTEND_DIST = ROOT / "frontend" / "dist"  # Vite production build
 
 
@@ -580,16 +591,22 @@ def rd_strategies_create(req: RDStrategyReq):
         return err("A custom strategy with this name already exists.", status=409)
     lab_matches = memory.find_lab_notes(req.name)
     code = req.code
+    seeded_from = None
     if not code and lab_matches:
-        # Seed from the first matching Lab tab's most recent code cell, if the
-        # user didn't already paste something in themselves.
+        # Seed from the first matching (done) Lab tab's most recent code cell,
+        # if the user didn't already paste something in themselves.
         for cell in reversed(lab_matches[0]["cells"]):
             if cell.get("code"):
                 code = cell["code"]
+                seeded_from = lab_matches[0]["session_name"]
                 break
     strategy = {
         "id": strategy_id, "name": req.name.strip(),
         "summary": req.summary.strip(), "code": code,
+        # Name-matching isn't verification — flag it so the UI can prompt a
+        # review rather than implying the pulled-in code is already correct
+        # for this strategy.
+        "seeded_from": seeded_from, "reviewed": seeded_from is None,
     }
     memory.save_custom_strategy(strategy_id, strategy)
     return ok(strategy, message="Strategy created")
@@ -597,11 +614,16 @@ def rd_strategies_create(req: RDStrategyReq):
 
 @app.put("/api/v1/rd/strategies/{strategy_id}")
 def rd_strategies_update(strategy_id: str, req: RDStrategyReq):
-    if not memory.get_custom_strategy(strategy_id):
+    existing = memory.get_custom_strategy(strategy_id)
+    if not existing:
         return err("Strategy not found.", status=404)
     strategy = {
         "id": strategy_id, "name": req.name.strip(),
         "summary": req.summary.strip(), "code": req.code,
+        "seeded_from": existing.get("seeded_from"),
+        # Saving from the UI means the user has looked at (and presumably
+        # vetted) the code, so the review nudge doesn't need to keep showing.
+        "reviewed": True,
     }
     memory.save_custom_strategy(strategy_id, strategy)
     return ok(strategy, message="Saved")

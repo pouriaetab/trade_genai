@@ -104,6 +104,14 @@ def find_lab_notes(strategy_name: str, max_sessions: int = 5, max_cells: int = 8
     substring check in either direction, no fuzzy scoring — good enough for
     "I named my tab about the same as the strategy."
 
+    Only tabs marked "done" are considered. This is deliberate: a Lab tab is
+    usually still being edited while you're actively working in it, and R&D
+    re-fetches this list live every time its panel renders — without the done
+    gate, a strategy's reference would keep shifting under you as you keep
+    tweaking the Lab tab. Marking a tab done is the signal "this is finished,
+    use it as a stable reference," which also means edits to either side after
+    that point can't destabilize the other.
+
     Pinned cells are preferred (the whole point of pinning); if a matching
     session has none, its most recent few cells are used instead so there's
     still something to look at.
@@ -117,6 +125,8 @@ def find_lab_notes(strategy_name: str, max_sessions: int = 5, max_cells: int = 8
 
     out = []
     for s in sessions:
+        if not s.get("done"):
+            continue
         sname = _normalize(s.get("name", ""))
         if not sname:
             continue

@@ -98,15 +98,17 @@ export default function RD() {
         {adding && (
           <div className="rd-add-form">
             <label className="ef-field ef-field-wide">
-              <span title="If this name matches (or is close to) a Notebook/Lab tab you've been working in, the new strategy is seeded from that tab's most recent code automatically.">
+              <span title="If this name matches (or is close to) a Notebook/Lab tab you've marked done, the new strategy is seeded from that tab's code automatically.">
                 Strategy name
               </span>
               <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)}
-                placeholder="e.g. Momentum, Pairs Trade, or match a Lab tab name" autoFocus />
+                placeholder="e.g. Momentum, Pairs Trade, or match a done Lab tab name" autoFocus />
             </label>
             <p className="rd-add-hint">
               Creates an editable code strategy you can run with the same kernel as the Notebook —
-              if the name matches a Lab tab, its code is pulled in as a starting point.
+              if the name matches a Lab tab marked "done" (✓ in the Notebook/Lab tab bar), its code is
+              pulled in as a starting point. Review it before relying on it — a name match doesn't mean
+              the code is correct for this strategy.
             </p>
             {createError && <div className="err"><pre>{createError}</pre></div>}
             <div className="ef-row">

@@ -104,8 +104,11 @@ export default function EfficientFrontier() {
 
   const symbols = () => state.symbolsText.split(",").map((s) => s.trim()).filter(Boolean);
   const symCount = symbols().length;
+  // Symbols actually available to simulate — from the computed stats, not the
+  // raw text field, since a typo'd or unfetchable ticker wouldn't be in here
+  // anyway. This is what the include/exclude checkboxes at the final step act on.
+  const statSymbols = () => state.statsResult ? Object.keys(state.statsResult.annual_returns) : symbols();
   const excludedSet = () => new Set((state.excludedSymbols || []).map((s) => s.toUpperCase()));
-  const activeSymbols = () => symbols().filter((s) => !excludedSet().has(s.toUpperCase()));
   function toggleExclude(sym) {
     const up = sym.toUpperCase();
     setState((s) => {
@@ -188,6 +191,24 @@ export default function EfficientFrontier() {
     if (data) { patch({ frontierResult: data }); setCollapsed(5, false); }
   }
 
+  // Once a simulation has run at least once, changing which symbols are
+  // included, the risk-free choice, or the portfolio count re-runs ONLY this
+  // step (annual_returns/cov_matrix are already computed and cached in
+  // statsResult) — no re-fetch, no re-transform. Debounced so ticking several
+  // checkboxes in a row doesn't fire a request per click.
+  const autoRerunKey = JSON.stringify([
+    [...excludedSet()], state.riskFreeChoice, state.riskFreeCustomRate,
+    state.riskFreeResolvedRate, state.nPortfolios,
+  ]);
+  const skipAutoRerun = useRef(true);
+  useEffect(() => {
+    if (skipAutoRerun.current) { skipAutoRerun.current = false; return; }
+    if (!state.statsResult || !state.frontierResult) return;
+    const t = setTimeout(() => { doFrontier(); }, 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRerunKey]);
+
   async function runAll() {
     const data = await runStep("run", () =>
       post("/api/v1/rd/ef/run", {
@@ -245,18 +266,6 @@ export default function EfficientFrontier() {
         {busy === "fetch" && (
           <p className="hint">Fetching {symCount || 1} symbol{symCount === 1 ? "" : "s"} from the market
             data API — usually ~1–3s per symbol, so roughly {Math.max(symCount, 1) * 1}–{Math.max(symCount, 1) * 3}s total.</p>
-        )}
-        {symCount > 1 && (
-          <div className="ef-exclude-row" title="Untick a symbol to leave it out of the simulation and results — without re-fetching or re-typing anything.">
-            <span className="hint">Include in simulation:</span>
-            {symbols().map((s) => (
-              <label key={s} className="ef-exclude-chip">
-                <input type="checkbox" checked={!excludedSet().has(s.toUpperCase())}
-                  onChange={() => toggleExclude(s)} />
-                {s.toUpperCase()}
-              </label>
-            ))}
-          </div>
         )}
       </StepCard>
 
@@ -324,6 +333,18 @@ export default function EfficientFrontier() {
         <StepCard index={5} title="Simulate portfolios" done={!!state.frontierResult}
           collapsed={state.collapsed[5]} onToggle={() => setCollapsed(5, !state.collapsed[5])}
           summary={summary4}>
+          {statSymbols().length > 1 && (
+            <div className="ef-exclude-row" title="Untick a symbol to leave it out of this simulation and its results. Re-simulates instantly from the already-computed stats above — no re-fetch or re-transform.">
+              <span className="hint">Include in simulation:</span>
+              {statSymbols().map((s) => (
+                <label key={s} className="ef-exclude-chip">
+                  <input type="checkbox" checked={!excludedSet().has(s.toUpperCase())}
+                    onChange={() => toggleExclude(s)} />
+                  {s.toUpperCase()}
+                </label>
+              ))}
+            </div>
+          )}
           <div className="ef-row">
             <RiskFreePicker
               choice={state.riskFreeChoice} onChoice={(v) => patch({ riskFreeChoice: v, riskFreeResolvedRate: null })}

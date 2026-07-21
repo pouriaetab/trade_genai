@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 export default function SessionTabs({
-  sessions, activeId, onSwitch, onAdd, onRename, onDelete, onArchive, onRestore,
+  sessions, activeId, onSwitch, onAdd, onRename, onDelete, onArchive, onRestore, onToggleDone,
 }) {
   const [editing, setEditing] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
@@ -13,7 +13,7 @@ export default function SessionTabs({
     <div className="session-tabs-wrap">
       <div className="session-tabs">
         {visible.map((s) => (
-          <div key={s.id} className={"stab" + (s.id === activeId ? " active" : "")}>
+          <div key={s.id} className={"stab" + (s.id === activeId ? " active" : "") + (s.done ? " done" : "")}>
             {editing === s.id ? (
               <input
                 className="stab-input"
@@ -29,8 +29,14 @@ export default function SessionTabs({
               <>
                 <button className="stab-name" onClick={() => onSwitch(s.id)}
                   onDoubleClick={() => setEditing(s.id)} title="Double-click to rename">
+                  {s.done && <span className="stab-done-dot" title="Marked done — frozen for R&D reference">✓</span>}
                   {s.name}
                 </button>
+                <button className={"stab-done" + (s.done ? " on" : "")}
+                  title={s.done
+                    ? "Marked done — R&D uses this tab as a stable reference. Click to reopen for editing."
+                    : "Mark done — freezes this tab as a stable reference for R&D, so further edits here (or in a matching R&D strategy) won't affect each other."}
+                  onClick={() => onToggleDone(s.id)}>{s.done ? "✓" : "○"}</button>
                 <button className="stab-archive" title="Archive tab (hide, keep its data)"
                   onClick={() => onArchive(s.id)}>⤓</button>
                 {sessions.length > 1 && (

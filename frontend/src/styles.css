@@ -36,6 +36,12 @@
 .stab-archive { border:none; background:transparent; border-radius:0; padding:5px 6px;
   color:var(--color-text-muted); font-size:var(--fs-sm); line-height:1; border-left:1px solid var(--color-border); }
 .stab-archive:hover { color:var(--color-text); background:transparent; }
+.stab.done { border-color:var(--color-brand); }
+.stab-done { border:none; background:transparent; border-radius:0; padding:5px 6px;
+  color:var(--color-text-muted); font-size:var(--fs-sm); line-height:1; border-left:1px solid var(--color-border); }
+.stab-done.on { color:var(--color-brand); }
+.stab-done:hover { color:var(--color-text); background:transparent; }
+.stab-done-dot { color:var(--color-brand); margin-right:4px; }
 .stab-input { padding:4px 8px; font-size:var(--fs-sm); max-width:140px; }
 .stab-add { border:1px dashed var(--color-border-strong); background:transparent;
   border-radius:var(--radius); padding:5px 10px; font-size:var(--fs-xs); color:var(--color-text-secondary); }
@@ -199,9 +205,13 @@ select.mini { padding:4px 8px; font-size:var(--fs-xs); max-width:170px; }
 .rd-table th { background:var(--color-surface-2); color:var(--color-text-secondary); }
 .rd-table td:first-child, .rd-table th:first-child { text-align:left; }
 
-.frontier-svg { width:100%; max-width:560px; height:auto; background:var(--color-surface);
+.frontier-svg { width:100%; max-width:560px; height:auto;
   border:1px solid var(--color-border); border-radius:var(--radius); }
-.chart-label { font-family:var(--font-mono); font-size:9.5px; fill:var(--color-text-secondary); }
+.chart-label { font-family:var(--font-mono); font-size:9.5px; }
+.frontier-tooltip { position:absolute; transform:translate(-50%, -115%); pointer-events:none;
+  background:#111827; color:#f3f4f6; border-radius:6px; padding:6px 9px; font-size:11px;
+  font-family:var(--font-mono); white-space:nowrap; box-shadow:0 2px 8px rgba(0,0,0,.25); z-index:5; }
+.frontier-tooltip strong { display:block; margin-bottom:2px; font-family:var(--font-sans); font-size:11px; }
 
 /* Settings — data providers + LLM providers/models */
 .settings-block { margin-bottom:28px; }
@@ -266,3 +276,6 @@ kbd { font-family:var(--font-mono); background:var(--color-surface-2); border:1p
 .rd-add-form { border:1px dashed var(--color-border-strong); border-radius:var(--radius-lg);
   padding:14px 16px; display:flex; flex-direction:column; gap:10px; margin-top:10px; }
 .rd-add-hint { font-size:var(--fs-xs); color:var(--color-text-muted); }
+.rd-review-banner { border:1px solid var(--color-warning); border-radius:var(--radius);
+  background:color-mix(in srgb, var(--color-warning) 12%, transparent);
+  padding:8px 12px; font-size:var(--fs-xs); color:var(--color-text-secondary); }

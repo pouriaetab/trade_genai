@@ -3,9 +3,11 @@ import { api } from "../../lib/api.js";
 
 // Read-only bridge from the Notebook/Lab tab. If you built and pinned cells
 // for something with roughly the same name as this strategy (e.g. a Lab tab
-// called "Efficient Frontier" or "EF test"), they show up here as reference
-// while you work on the formal R&D version — no copy/paste needed, and the
-// code stays editable right where you used it in the Lab.
+// called "Efficient Frontier" or "EF test") and marked that tab "done", they
+// show up here as reference while you work on the formal R&D version. Only
+// done tabs are matched — an in-progress tab you're still editing won't show
+// up (and won't keep shifting the reference under you); mark it done in the
+// Notebook/Lab tab bar (the ○/✓ button) once you're happy with it.
 export default function LabNotesPanel({ strategyName }) {
   const [matches, setMatches] = useState([]);
   const [open, setOpen] = useState(false);
@@ -19,7 +21,8 @@ export default function LabNotesPanel({ strategyName }) {
     return () => { cancelled = true; };
   }, [strategyName]);
 
-  if (!loaded || matches.length === 0) return null;
+  if (!loaded) return null;
+  if (matches.length === 0) return null;
 
   const cellCount = matches.reduce((n, m) => n + m.cells.length, 0);
 

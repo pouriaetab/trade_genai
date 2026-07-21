@@ -55,6 +55,13 @@ export default function CodeStrategy({ strategy, onSaved, onDeleted }) {
 
   return (
     <div className="code-strategy">
+      {strategy.seeded_from && !strategy.reviewed && (
+        <div className="rd-review-banner">
+          Seeded from your Lab tab "{strategy.seeded_from}" because the names matched — that's a
+          convenience, not a correctness check. Read through the code below before trusting or
+          running it; saving here marks it reviewed.
+        </div>
+      )}
       <LabNotesPanel strategyName={strategy.name} />
       <label className="ef-field ef-field-wide">
         <span>Summary</span>

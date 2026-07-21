@@ -28,7 +28,11 @@ from ..data.massive import get_adjusted_close
 
 TRADING_DAYS = 252
 DEFAULT_N_PORTFOLIOS = 10_000
-MAX_CHART_POINTS = 2_000  # cap what's sent back for the scatter plot; best/worst are exact regardless
+# Cap what's sent back (and what gets persisted to sticky state) for the scatter
+# plot — best/worst portfolios are always exact over the full sample regardless
+# of this cap. Kept modest because this array is what bloats data/memory.json
+# (it's saved as part of R&D's sticky state so charts reload instantly).
+MAX_CHART_POINTS = 500
 
 
 def fetch_prices(symbols: list[str], start: dt.date, end: dt.date) -> pd.DataFrame:
