@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { post } from "../lib/api.js";
 import { useElapsed } from "../lib/useElapsed.js";
+import { renderMarkdown } from "../lib/markdown.js";
 
 const uid = () => (globalThis.crypto?.randomUUID?.() || `c${Date.now()}${Math.random()}`);
 const DEFAULT_MAX_TOKENS = 4096;
@@ -240,7 +241,8 @@ export default function Workbench({ models, cells, onCells, onModelChange }) {
               {c.kind === "prompt" && c.input && <div className="msg user"><span>{c.input}</span></div>}
               {c.answer === "…" ? <span className="dots">…</span>
                 : proseOnly(c.answer, c.code != null) &&
-                  <div className="answer">{proseOnly(c.answer, c.code != null)}</div>}
+                  <div className="answer"
+                    dangerouslySetInnerHTML={{ __html: renderMarkdown(proseOnly(c.answer, c.code != null)) }} />}
               {c.code != null && (
                 <div className="code-block">
                   <div className="code-head">

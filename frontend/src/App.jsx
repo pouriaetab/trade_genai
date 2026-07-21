@@ -121,6 +121,18 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
+  // Adding/removing a key or provider in Settings doesn't touch this page's
+  // `models` state (it only ever loaded once, above, on first mount) — so the
+  // Workbench picker kept showing "(add key)" even right after a key was
+  // saved. Re-fetch whenever the user comes back to the Lab page, which is
+  // exactly when they'd notice/care that a provider just became ready.
+  useEffect(() => {
+    if (page !== "lab") return;
+    let cancelled = false;
+    api("/api/v1/models").then((r) => { if (!cancelled && r?.success) setModels(r.data || []); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [page]);
+
   // Debounced autosave of the whole workspace after any change. Gated on
   // `loaded`, which is only ever set after a confirmed successful load —
   // see above — so a backend hiccup can't silently overwrite saved sessions.
