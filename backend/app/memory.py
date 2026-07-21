@@ -72,3 +72,19 @@ def save_workspace(workspace: dict) -> dict:
         state["workspace"] = workspace
         _save(state)
         return workspace
+
+
+# --- R&D strategy state: inputs + results per strategy, sticky across restarts
+
+def get_rd_state(strategy_id: str) -> dict:
+    with _lock:
+        state = _load()
+        return state.get("rd_state", {}).get(strategy_id, {})
+
+
+def save_rd_state(strategy_id: str, rd_state: dict) -> dict:
+    with _lock:
+        state = _load()
+        state.setdefault("rd_state", {})[strategy_id] = rd_state
+        _save(state)
+        return rd_state

@@ -17,8 +17,11 @@ Endpoints (all under /api/v1, all return the standard envelope):
     POST /api/v1/rd/ef/fetch         Efficient Frontier: fetch prices
     POST /api/v1/rd/ef/returns       Efficient Frontier: prices -> returns
     POST /api/v1/rd/ef/stats         Efficient Frontier: returns -> annual stats
-    POST /api/v1/rd/ef/frontier      Efficient Frontier: stats -> frontier curve
+    POST /api/v1/rd/ef/risk-free     Efficient Frontier: a proxy symbol -> its annualized rate
+    POST /api/v1/rd/ef/frontier      Efficient Frontier: stats -> simulated portfolios
     POST /api/v1/rd/ef/run           Efficient Frontier: whole pipeline at once
+    GET  /api/v1/rd/state/{id}       load a strategy's sticky UI state (inputs/results)
+    PUT  /api/v1/rd/state/{id}       save a strategy's sticky UI state
 
     Settings — add/remove providers from the app, no code or .env edits needed:
     GET    /api/v1/settings/data-providers            list market-data providers
@@ -52,6 +55,7 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
+import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from genai_trader import config as cfg  # noqa: E402
@@ -120,11 +124,18 @@ class EFStatsReq(BaseModel):
     periods_per_year: int = 252
 
 
+class EFRiskFreeReq(BaseModel):
+    symbol: str
+    start: str
+    end: str
+
+
 class EFFrontierReq(BaseModel):
     annual_returns: dict
     cov_matrix: dict
     risk_free_rate: float = 0.0
-    n_points: int = 40
+    risk_free_label: str = "Risk-Free"
+    n_portfolios: int = 10_000
 
 
 class EFRunReq(BaseModel):
@@ -133,7 +144,12 @@ class EFRunReq(BaseModel):
     end: str
     kind: str = "simple"
     risk_free_rate: float = 0.0
-    n_points: int = 40
+    risk_free_label: str = "Risk-Free"
+    n_portfolios: int = 10_000
+
+
+class RDStateReq(BaseModel):
+    state: dict = {}
 
 
 class DataProviderReq(BaseModel):
@@ -330,8 +346,9 @@ def _table(df: "pd.DataFrame", index_name: str = "date") -> dict:
     return {"index": index, "index_name": index_name, "columns": [str(c) for c in df.columns], "data": data}
 
 
-def _wide_from_table(t: dict) -> "pd.DataFrame":
-    return pd.DataFrame(t["data"], columns=t["columns"], index=pd.to_datetime(t["index"]))
+def _wide_from_table(t: dict, index_is_date: bool = True) -> "pd.DataFrame":
+    index = pd.to_datetime(t["index"]) if index_is_date else t["index"]
+    return pd.DataFrame(t["data"], columns=t["columns"], index=index)
 
 
 def _parse_symbols(symbols: list[str]) -> list[str]:
@@ -344,8 +361,8 @@ def strategies():
         {
             "id": "efficient_frontier",
             "name": "Efficient Frontier",
-            "summary": "Fetch a symbol basket, transform prices into returns, "
-                       "then solve the mean-variance efficient frontier.",
+            "summary": "Fetch a symbol basket, transform prices into returns, then "
+                       "simulate long-only random portfolios to find the best allocation.",
         },
     ])
 
@@ -401,27 +418,61 @@ def ef_stats(req: EFStatsReq):
         return err(f"Stats failed: {exc}", status=400)
 
 
+@app.post("/api/v1/rd/ef/risk-free")
+def ef_risk_free(req: EFRiskFreeReq):
+    """Real, data-backed risk-free rate from a proxy symbol (e.g. BIL, SHY) —
+    its own annualized mean return over the same window, so you're not
+    guessing a percentage."""
+    try:
+        start = dt.date.fromisoformat(req.start)
+        end = dt.date.fromisoformat(req.end)
+    except ValueError:
+        return err("Dates must be YYYY-MM-DD.", status=400)
+    try:
+        rate = strat.risk_free_annual_rate(req.symbol.strip().upper(), start, end)
+        return ok({"symbol": req.symbol.strip().upper(), "annual_rate": rate})
+    except ValueError as exc:
+        return err(str(exc), status=400)
+    except Exception as exc:
+        return err(f"Fetch failed: {exc}", status=502)
+
+
+def _simulate(annual_returns: pd.Series, cov: pd.DataFrame, risk_free_rate: float,
+             risk_free_label: str, n_portfolios: int) -> dict:
+    """Branches on symbol count: 2+ risky assets get the normal random-portfolio
+    simulation; exactly 1 gets blended with the risk-free asset instead (see
+    simulate_single_asset's docstring for why that case is handled differently)."""
+    if len(annual_returns) == 1:
+        symbol = annual_returns.index[0]
+        mu = float(annual_returns.iloc[0])
+        vol = float(np.sqrt(cov.iloc[0, 0]))
+        return strat.simulate_single_asset(
+            symbol, mu, vol, risk_free_label or "Risk-Free", risk_free_rate, n_portfolios=n_portfolios
+        )
+    return strat.simulate_portfolios(
+        annual_returns, cov, risk_free_rate=risk_free_rate, n_portfolios=n_portfolios
+    )
+
+
 @app.post("/api/v1/rd/ef/frontier")
 def ef_frontier(req: EFFrontierReq):
     try:
         mu = pd.Series(req.annual_returns)
-        cov = _wide_from_table(req.cov_matrix)
-        result = strat.efficient_frontier(
-            mu, cov, risk_free_rate=req.risk_free_rate, n_points=req.n_points
-        )
+        cov = _wide_from_table(req.cov_matrix, index_is_date=False)
+        result = _simulate(mu, cov, req.risk_free_rate, req.risk_free_label, req.n_portfolios)
         return ok(result)
     except ValueError as exc:
         return err(str(exc), status=400)
     except Exception as exc:
-        return err(f"Efficient frontier failed: {exc}", status=400)
+        return err(f"Simulation failed: {exc}", status=400)
 
 
 @app.post("/api/v1/rd/ef/run")
 def ef_run(req: EFRunReq):
-    """Whole pipeline in one call: fetch -> returns -> stats -> frontier."""
+    """Whole pipeline in one call: fetch -> returns -> stats -> simulate."""
     symbols = _parse_symbols(req.symbols)
-    if len(symbols) < 2:
-        return err("Provide at least 2 symbols to build a frontier.", status=400)
+    if not symbols:
+        return err("Provide at least one symbol.", status=400)
     try:
         start = dt.date.fromisoformat(req.start)
         end = dt.date.fromisoformat(req.end)
@@ -436,9 +487,7 @@ def ef_run(req: EFRunReq):
         if returns.empty:
             return err("Not enough overlapping data to compute returns.", status=400)
         annual_returns, cov = strat.annualize(returns)
-        frontier = strat.efficient_frontier(
-            annual_returns, cov, risk_free_rate=req.risk_free_rate, n_points=req.n_points
-        )
+        sim = _simulate(annual_returns, cov, req.risk_free_rate, req.risk_free_label, req.n_portfolios)
         preview = long_df.copy()
         preview["date"] = preview["date"].dt.strftime("%Y-%m-%d")
         return ok({
@@ -448,12 +497,24 @@ def ef_run(req: EFRunReq):
             "returns": _table(returns),
             "annual_returns": {k: float(v) for k, v in annual_returns.items()},
             "cov_matrix": _table(cov, index_name="symbol"),
-            **frontier,
+            **sim,
         })
     except ValueError as exc:
         return err(str(exc), status=400)
     except Exception as exc:
         return err(f"Run failed: {exc}", status=502)
+
+
+# --- R&D strategy state: sticky inputs/results across sessions -------------
+
+@app.get("/api/v1/rd/state/{strategy_id}")
+def get_rd_state_ep(strategy_id: str):
+    return ok(memory.get_rd_state(strategy_id))
+
+
+@app.put("/api/v1/rd/state/{strategy_id}")
+def put_rd_state_ep(strategy_id: str, req: RDStateReq):
+    return ok(memory.save_rd_state(strategy_id, req.state), message="Saved")
 
 
 # --- Settings: data providers + LLM providers/models, editable from the app -

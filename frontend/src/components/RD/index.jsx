@@ -4,6 +4,12 @@ import EfficientFrontier from "./EfficientFrontier.jsx";
 // Each entry is one strategy card in the R&D tab. Add new strategies here —
 // give them an id, name, one-line summary, and the component that renders
 // inside the expanded panel (fetch/transform/compute controls, tables, charts).
+//
+// Blueprint: EfficientFrontier.jsx is the reference implementation for a new
+// strategy. Reuse its pattern — StepCard.jsx for collapsible numbered steps,
+// GET/PUT /api/v1/rd/state/{strategy_id} (see backend/app/memory.py) for
+// sticky inputs/results across tab switches and restarts, and RiskFreePicker
+// / FrontierChart as examples of small reusable pieces.
 const STRATEGIES = [
   {
     id: "efficient_frontier",

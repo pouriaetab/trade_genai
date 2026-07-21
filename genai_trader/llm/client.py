@@ -30,12 +30,30 @@ from ..config import _load_dotenv
 from . import overlay
 from .registry import PROVIDERS, get_model
 
-DEFAULT_TIMEOUT = 60
+DEFAULT_TIMEOUT = 120  # long code-generation replies can take a while to finish streaming
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
 
 
 class ProviderError(RuntimeError):
     """Raised when a provider isn't configured or the request fails."""
+
+
+def _post(label: str, url: str, **kwargs) -> requests.Response:
+    """requests.post with provider-agnostic, actionable error messages for the
+    two most common failure modes (slow reply, no network) instead of a raw
+    stack trace bubbling up to the UI."""
+    kwargs.setdefault("timeout", DEFAULT_TIMEOUT)
+    try:
+        return requests.post(url, **kwargs)
+    except requests.exceptions.Timeout:
+        timeout = kwargs["timeout"]
+        raise ProviderError(
+            f"{label} didn't reply within {timeout}s. This usually means the prompt/response "
+            f"is unusually long or the provider is slow right now — try again, shorten the "
+            f"prompt, or switch to a faster model (e.g. a Flash/Haiku/Mini variant)."
+        )
+    except requests.exceptions.ConnectionError:
+        raise ProviderError(f"Couldn't reach {label} — check your internet connection and try again.")
 
 
 def _api_key(provider_id: str) -> str:
@@ -116,11 +134,8 @@ def _chat_openai_compat_url(url: str, label: str, key: str, model: str,
                             messages: list[dict], max_tokens: int, temperature: float) -> dict:
     body = {"model": model, "messages": messages,
             "max_tokens": max_tokens, "temperature": temperature}
-    r = requests.post(
-        url, json=body,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        timeout=DEFAULT_TIMEOUT,
-    )
+    r = _post(label, url, json=body,
+              headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
     if r.status_code >= 400:
         raise ProviderError(f"{label} error {r.status_code}: {_err_message(r)}")
     data = r.json()
@@ -135,12 +150,9 @@ def _chat_anthropic(model, messages, max_tokens, temperature):
             "messages": convo}
     if system:
         body["system"] = system
-    r = requests.post(
-        "https://api.anthropic.com/v1/messages", json=body,
-        headers={"x-api-key": key, "anthropic-version": "2023-06-01",
-                 "Content-Type": "application/json"},
-        timeout=DEFAULT_TIMEOUT,
-    )
+    r = _post("Claude", "https://api.anthropic.com/v1/messages", json=body,
+              headers={"x-api-key": key, "anthropic-version": "2023-06-01",
+                       "Content-Type": "application/json"})
     if r.status_code >= 400:
         raise ProviderError(f"Claude error {r.status_code}: {_err_message(r)}")
     data = r.json()
@@ -177,8 +189,7 @@ def _chat_gemini(model, messages, max_tokens, temperature):
     if system:
         body["systemInstruction"] = {"parts": [{"text": "\n".join(system)}]}
     url = f"{GEMINI_BASE}/models/{model}:generateContent?key={key}"
-    r = requests.post(url, json=body, headers={"Content-Type": "application/json"},
-                      timeout=DEFAULT_TIMEOUT)
+    r = _post("Gemini", url, json=body, headers={"Content-Type": "application/json"})
     if r.status_code >= 400:
         detail = _err_message(r)
         if r.status_code == 404:

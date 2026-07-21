@@ -163,13 +163,15 @@ export default function Workbench({ models, cells, onCells, onModelChange }) {
       <div className="panel-head">
         <h2>Workbench</h2>
         <div className="spacer" />
-        <select className="mini" value={providerId} onChange={(e) => setProviderId(e.target.value)}>
+        <select className="mini" value={providerId} onChange={(e) => setProviderId(e.target.value)}
+          title="Which LLM provider to send prompts to — manage keys and available providers in Settings">
           {models.map((p) => <option key={p.id} value={p.id}>{p.label}{p.ready ? "" : " (add key)"}</option>)}
         </select>
-        <select className="mini" value={modelId} onChange={(e) => setModelId(e.target.value)}>
+        <select className="mini" value={modelId} onChange={(e) => setModelId(e.target.value)}
+          title="Which model from the selected provider to use — see the badge below for its tier and cost">
           {(provider?.models || []).map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
         </select>
-        <div className="mode-toggle">
+        <div className="mode-toggle" title="Prompt: ask in plain English, the model writes and runs the code. Code: write and run Python yourself in the same shared kernel.">
           <button className={mode === "prompt" ? "on" : "ghost"} onClick={() => setMode("prompt")}>Prompt</button>
           <button className={mode === "code" ? "on" : "ghost"} onClick={() => setMode("code")}>Code</button>
         </div>

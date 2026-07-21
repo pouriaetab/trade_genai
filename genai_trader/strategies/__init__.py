@@ -10,8 +10,10 @@ from __future__ import annotations
 from .efficient_frontier import (
     annualize,
     compute_returns,
-    efficient_frontier,
     fetch_prices,
+    risk_free_annual_rate,
+    simulate_portfolios,
+    simulate_single_asset,
     to_wide_adj_close,
 )
 
@@ -20,5 +22,7 @@ __all__ = [
     "to_wide_adj_close",
     "compute_returns",
     "annualize",
-    "efficient_frontier",
+    "risk_free_annual_rate",
+    "simulate_portfolios",
+    "simulate_single_asset",
 ]
